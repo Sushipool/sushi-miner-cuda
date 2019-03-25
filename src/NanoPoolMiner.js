@@ -4,6 +4,8 @@ const NativeMiner = require('bindings')('nimiq_miner_cuda.node');
 const HASHRATE_MOVING_AVERAGE = 5; // seconds
 const HASHRATE_REPORT_INTERVAL = 5; // seconds
 
+const SHARE_WATCHDOG_INTERVAL = 180; // seconds
+
 class NanoPoolMiner extends Nimiq.NanoPoolMiner {
 
     constructor(blockchain, time, address, deviceId, deviceData, allowedDevices, memorySizes) {
@@ -30,26 +32,32 @@ class NanoPoolMiner extends Nimiq.NanoPoolMiner {
             Nimiq.Log.i(NanoPoolMiner, `GPU #${idx}: ${device.name}, ${device.multiProcessorCount} SM @ ${device.clockRate} MHz. Using ${device.memory} MB.`);
         });
 
-        this._hashes = new Array(this._devices.length).fill(0);
-        this._lastHashRates = this._hashes.map(_ => []);
+        this._hashes = [];
+        this._lastHashRates = [];
+        this._sharesFound = 0;
     }
 
     _reportHashRates() {
-        this._lastHashRates.forEach((hashRates, idx) => {
-            const hashRate = this._hashes[idx] / HASHRATE_REPORT_INTERVAL;
-            hashRates.push(hashRate);
-            if (hashRates.length > HASHRATE_MOVING_AVERAGE) {
-                hashRates.shift();
+        const averageHashRates = [];
+        this._hashes.forEach((hashes, idx) => {
+            const hashRate = hashes / HASHRATE_REPORT_INTERVAL;
+            this._lastHashRates[idx] = this._lastHashRates[idx] || [];
+            this._lastHashRates[idx].push(hashRate);
+            if (this._lastHashRates[idx].length > HASHRATE_MOVING_AVERAGE) {
+                this._lastHashRates[idx].shift();
             }
+            averageHashRates[idx] = this._lastHashRates[idx].reduce((sum, val) => sum + val, 0) / this._lastHashRates[idx].length;
         });
-        this._hashes.fill(0);
-        const averageHashRates = this._lastHashRates.map(hashRates => hashRates.reduce((sum, val) => sum + val, 0) / hashRates.length);
+        this._hashes = [];
         this.fire('hashrates-changed', averageHashRates);
     }
 
     _startMining() {
         if (!this._hashRateTimer) {
             this._hashRateTimer = setInterval(() => this._reportHashRates(), 1000 * HASHRATE_REPORT_INTERVAL);
+        }
+        if (!this._shareWatchDog) {
+            this._shareWatchDog = setInterval(() => this._checkIfSharesFound(), 1000 * SHARE_WATCHDOG_INTERVAL);
         }
         const block = this.getNextBlock();
         if (!block) {
@@ -66,21 +74,33 @@ class NanoPoolMiner extends Nimiq.NanoPoolMiner {
             if (obj.nonce > 0) {
                 this._submitShare(block, obj.nonce);
             }
-            this._hashes[obj.device] += obj.noncesPerRun;
+            this._hashes[obj.device] = (this._hashes[obj.device] || 0) + obj.noncesPerRun;
         });
     }
 
     _stopMining() {
         this._miner.stop();
         if (this._hashRateTimer) {
+            this._hashes = [];
+            this._lastHashRates = [];
             clearInterval(this._hashRateTimer);
             delete this._hashRateTimer;
+        }
+        if (this._shareWatchDog) {
+            clearInterval(this._shareWatchDog);
+            delete this._shareWatchDog;
         }
     }
 
     _onNewPoolSettings(address, extraData, shareCompact, nonce) {
         super._onNewPoolSettings(address, extraData, shareCompact, nonce);
-        this._miner.setShareCompact(shareCompact);
+        if (Nimiq.BlockUtils.isValidCompact(shareCompact)) {
+            const difficulty = Nimiq.BlockUtils.compactToDifficulty(shareCompact);
+            Nimiq.Log.i(NanoPoolMiner, `Set share difficulty: ${difficulty.toFixed(2)} (${shareCompact.toString(16)})`);
+            this._miner.setShareCompact(shareCompact);
+        } else {
+            Nimiq.Log.w(NanoPoolMiner, `Pool sent invalid target: ${shareCompact}`);
+        }
     }
 
     async _handleNewBlock(msg) {
@@ -98,6 +118,21 @@ class NanoPoolMiner extends Nimiq.NanoPoolMiner {
             nonce,
             hash: new Nimiq.Hash(hash)
         });
+    }
+
+    _onBlockMined(block) {
+        super._onBlockMined(block);
+        this._sharesFound++;
+    }
+
+    _checkIfSharesFound() {
+        Nimiq.Log.d(NanoPoolMiner, `Shares found since the last check: ${this._sharesFound}`);
+        if (this._sharesFound > 0) {
+            this._sharesFound = 0;
+            return;
+        }
+        Nimiq.Log.w(NanoPoolMiner, `No shares have been found for the last ${SHARE_WATCHDOG_INTERVAL} seconds. Reconnecting.`);
+        this._timeoutReconnect();
     }
 
     _turnPoolOff() {
