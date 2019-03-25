@@ -1,18 +1,19 @@
 #include <cuda_runtime.h>
 #include <nan.h>
 
-#include <stdint.h>
-#include <stdio.h>
-#include <unistd.h>
-
 #include <atomic>
+#include <cstdint>
+#include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "kernels.h"
 
+typedef Nan::AsyncBareProgressQueueWorker<uint32_t>::ExecutionProgress MinerProgress;
+
 class Device;
-class MinerWorker;
 
 class Miner : public Nan::ObjectWrap
 {
@@ -46,40 +47,43 @@ private:
 class Device
 {
 public:
-  Device(int device);
+  Device(Miner *miner, int device);
   ~Device();
 
   static NAN_GETTER(HandleGetters);
   static NAN_SETTER(HandleSetters);
 
   bool IsEnabled();
+  uint32_t GetNoncesPerRun();
+  uint32_t GetDeviceIndex();
+  void MineNonces(nimiq_block_header *blockHeader, const MinerProgress &progress);
 
 private:
-  friend class MinerWorker;
+  void Initialize();
+  void SetBlockHeader(struct nimiq_block_header *blockHeader);
+
+  Miner *miner;
   int device;
   cudaDeviceProp prop;
   bool enabled = true;
   uint32_t memory;
-  uv_mutex_t lock;
-  bool workerInitialized = false;
+  std::mutex mutex;
+  bool initialized = false;
   worker_t worker;
 };
 
 class MinerWorker : public Nan::AsyncProgressQueueWorker<uint32_t>
 {
 public:
-  MinerWorker(Nan::Callback *callback, Miner *miner, Device *device, nimiq_block_header blockHeader);
-  ~MinerWorker();
+  MinerWorker(Nan::Callback *callback, Device *device, nimiq_block_header blockHeader);
 
-  void Execute(const ExecutionProgress &progress);
+  void Execute(const MinerProgress &progress);
   void HandleProgressCallback(const uint32_t *data, size_t count);
   void HandleOKCallback();
 
 private:
-  Miner *miner;
   Device *device;
   nimiq_block_header blockHeader;
-  uint32_t workId;
 };
 
 /*
@@ -93,7 +97,7 @@ Miner::Miner(int deviceCount) : deviceCount(deviceCount)
   devices.resize(deviceCount);
   for (int i = 0; i < deviceCount; i++)
   {
-    devices[i] = new Device(i);
+    devices[i] = new Device(this, i);
   }
 }
 
@@ -233,7 +237,7 @@ NAN_METHOD(Miner::StartMiningOnBlock)
     Device *device = miner->devices[i];
     if (device->IsEnabled())
     {
-      Nan::AsyncQueueWorker(new MinerWorker(new Nan::Callback(cbFunc), miner, device, *header));
+      Nan::AsyncQueueWorker(new MinerWorker(new Nan::Callback(cbFunc), device, *header));
       enabledDevices++;
     }
   }
@@ -254,10 +258,9 @@ NAN_METHOD(Miner::Stop)
 * Device
 */
 
-Device::Device(int device) : device(device)
+Device::Device(Miner *miner, int device) : miner(miner), device(device)
 {
   cudaGetDeviceProperties(&prop, device);
-  uv_mutex_init(&lock);
 
   // whole number of GB minus one
   memory = (prop.totalGlobalMem / ONE_GB - 1) * (ONE_GB / ONE_MB);
@@ -265,11 +268,12 @@ Device::Device(int device) : device(device)
 
 Device::~Device()
 {
-  if (workerInitialized)
+  if (initialized)
   {
-    release_worker(&worker);
+    cudaFree(worker.memory);
+    cudaFree(worker.inseed);
+    cudaFree(worker.nonce);
   }
-  uv_mutex_destroy(&lock);
 }
 
 NAN_GETTER(Device::HandleGetters)
@@ -357,52 +361,128 @@ bool Device::IsEnabled()
   return enabled;
 }
 
+uint32_t Device::GetNoncesPerRun()
+{
+  return worker.nonces_per_run;
+}
+
+uint32_t Device::GetDeviceIndex()
+{
+  return device;
+}
+
+void Device::Initialize()
+{
+  if (initialized)
+  {
+    return;
+  }
+
+  cudaSetDevice(device);
+  cudaDeviceReset();
+  cudaSetDeviceFlags(cudaDeviceScheduleAuto);
+  cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
+
+  uint32_t nonces_per_run = (memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);
+  nonces_per_run = (nonces_per_run / BLAKE2B_THREADS_PER_BLOCK) * BLAKE2B_THREADS_PER_BLOCK;
+  size_t mem_size = sizeof(block_g) * NIMIQ_ARGON2_COST * nonces_per_run;
+
+  worker.nonces_per_run = nonces_per_run;
+
+  cudaError_t result = cudaMalloc(&worker.memory, mem_size);
+  if (result != cudaSuccess)
+  {
+    // TODO Exception
+  }
+
+  result = cudaMalloc(&worker.inseed, sizeof(initial_seed));
+  if (result != cudaSuccess)
+  {
+    // TODO Exception
+  }
+
+  result = cudaMalloc(&worker.nonce, sizeof(uint32_t));
+  if (result != cudaSuccess)
+  {
+    // TODO Exception
+  }
+
+  worker.init_memory_blocks = dim3(nonces_per_run / BLAKE2B_THREADS_PER_BLOCK);
+  worker.init_memory_threads = dim3(BLAKE2B_THREADS_PER_BLOCK);
+
+  worker.argon2_blocks = dim3(1, nonces_per_run);
+  worker.argon2_threads = dim3(THREADS_PER_LANE, 1);
+
+  worker.get_nonce_blocks = dim3(nonces_per_run / BLAKE2B_THREADS_PER_BLOCK);
+  worker.get_nonce_threads = dim3(BLAKE2B_THREADS_PER_BLOCK);
+
+  initialized = true;
+}
+
+void Device::SetBlockHeader(struct nimiq_block_header *blockHeader)
+{
+  initial_seed inseed;
+  inseed.lanes = 1;
+  inseed.hash_len = ARGON2_HASH_LENGTH;
+  inseed.memory_cost = NIMIQ_ARGON2_COST;
+  inseed.iterations = 1;
+  inseed.version = 0x13;
+  inseed.type = 0;
+  inseed.header_len = sizeof(nimiq_block_header);
+  memcpy(&inseed.header, blockHeader, sizeof(nimiq_block_header));
+  inseed.salt_len = NIMIQ_ARGON2_SALT_LEN;
+  memcpy(&inseed.salt, NIMIQ_ARGON2_SALT, NIMIQ_ARGON2_SALT_LEN);
+  inseed.secret_len = 0;
+  inseed.extra_len = 0;
+  memset(&inseed.padding, 0, sizeof(inseed.padding));
+
+  cudaSetDevice(device);
+
+  cudaError_t result = cudaMemcpy(worker.inseed, &inseed, sizeof(initial_seed), cudaMemcpyHostToDevice);
+  if (result != cudaSuccess)
+  {
+    // TODO: Exception
+  }
+
+  cudaMemset(worker.nonce, 0, sizeof(uint32_t)); // zero nonce
+}
+
+void Device::MineNonces(nimiq_block_header *blockHeader, const MinerProgress &progress)
+{
+  std::lock_guard<std::mutex> lock(mutex);
+
+  Initialize();
+
+  SetBlockHeader(blockHeader);
+
+  uint32_t workId = miner->GetWorkId();
+  while (miner->IsMiningEnabled())
+  {
+    if (workId != miner->GetWorkId())
+    {
+      break;
+    }
+    uint32_t startNonce = miner->GetNextStartNonce(GetNoncesPerRun());
+    // TODO: Handle startNonce overflow
+    uint32_t nonce = mine_nonces(&worker, startNonce, miner->GetShareCompact());
+    progress.Send(&nonce, 1);
+  }
+
+  // TODO: Catch: SetErrorMessage("Could not allocate memory.");
+}
+
 /*
 * MinerWorker
 */
 
-MinerWorker::MinerWorker(Nan::Callback *callback, Miner *miner, Device *device, nimiq_block_header blockHeader)
-    : AsyncProgressQueueWorker(callback), miner(miner), device(device), blockHeader(blockHeader)
-{
-  workId = miner->GetWorkId();
-}
-
-MinerWorker::~MinerWorker()
+MinerWorker::MinerWorker(Nan::Callback *callback, Device *device, nimiq_block_header blockHeader)
+    : AsyncProgressQueueWorker(callback), device(device), blockHeader(blockHeader)
 {
 }
 
-void MinerWorker::Execute(const ExecutionProgress &progress)
+void MinerWorker::Execute(const MinerProgress &progress)
 {
-  uv_mutex_lock(&device->lock);
-
-  if (!device->workerInitialized)
-  {
-    device->workerInitialized = (0 == initialize_worker(&device->worker, device->device, (size_t)device->memory * ONE_MB));
-  }
-
-  if (device->workerInitialized)
-  {
-    if (0 == set_block_header(&device->worker, &blockHeader))
-    {
-      while (miner->IsMiningEnabled())
-      {
-        if (workId != miner->GetWorkId())
-        {
-          break;
-        }
-        uint32_t startNonce = miner->GetNextStartNonce(device->worker.nonces_per_run);
-        // TODO: Handle startNonce overflow
-        uint32_t nonce = mine_nonces(&device->worker, startNonce, miner->GetShareCompact());
-        progress.Send(&nonce, 1);
-      }
-    }
-  }
-  else
-  {
-    SetErrorMessage("Could not allocate memory.");
-  }
-
-  uv_mutex_unlock(&device->lock);
+  device->MineNonces(&blockHeader, progress);
 }
 
 void MinerWorker::HandleProgressCallback(const uint32_t *nonce, size_t count)
@@ -411,8 +491,8 @@ void MinerWorker::HandleProgressCallback(const uint32_t *nonce, size_t count)
 
   v8::Local<v8::Object> obj = Nan::New<v8::Object>();
   Nan::Set(obj, Nan::New("done").ToLocalChecked(), Nan::New(false));
-  Nan::Set(obj, Nan::New("device").ToLocalChecked(), Nan::New(device->device));
-  Nan::Set(obj, Nan::New("noncesPerRun").ToLocalChecked(), Nan::New(device->worker.nonces_per_run));
+  Nan::Set(obj, Nan::New("device").ToLocalChecked(), Nan::New(device->GetDeviceIndex()));
+  Nan::Set(obj, Nan::New("noncesPerRun").ToLocalChecked(), Nan::New(device->GetNoncesPerRun()));
   Nan::Set(obj, Nan::New("nonce").ToLocalChecked(), Nan::New(*nonce));
 
   v8::Local<v8::Value> argv[] = {Nan::Null(), obj};
@@ -425,8 +505,8 @@ void MinerWorker::HandleOKCallback()
 
   v8::Local<v8::Object> obj = Nan::New<v8::Object>();
   Nan::Set(obj, Nan::New("done").ToLocalChecked(), Nan::New(true));
-  Nan::Set(obj, Nan::New("device").ToLocalChecked(), Nan::New(device->device));
-  Nan::Set(obj, Nan::New("noncesPerRun").ToLocalChecked(), Nan::New(device->worker.nonces_per_run));
+  Nan::Set(obj, Nan::New("device").ToLocalChecked(), Nan::New(device->GetDeviceIndex()));
+  Nan::Set(obj, Nan::New("noncesPerRun").ToLocalChecked(), Nan::New(device->GetNoncesPerRun()));
   Nan::Set(obj, Nan::New("nonce").ToLocalChecked(), Nan::Undefined());
 
   v8::Local<v8::Value> argv[] = {Nan::Null(), obj};

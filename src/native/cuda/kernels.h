@@ -65,7 +65,6 @@ struct block_g
 
 struct worker_t
 {
-    int device;
     uint32_t nonces_per_run;
     block_g *memory;
     uint64_t *inseed;
@@ -74,17 +73,14 @@ struct worker_t
     dim3 init_memory_threads;
     dim3 argon2_blocks;
     dim3 argon2_threads;
-    dim3 find_nonce_blocks;
-    dim3 find_nonce_threads;
+    dim3 get_nonce_blocks;
+    dim3 get_nonce_threads;
 };
 
 __global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce);
 __global__ void argon2(struct block_g *memory);
 __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
 
-__host__ uint32_t initialize_worker(struct worker_t *worker, int device, size_t memory);
-__host__ uint32_t set_block_header(struct worker_t *worker, nimiq_block_header *header);
 __host__ uint32_t mine_nonces(struct worker_t *worker, uint32_t start_nonce, uint32_t share_compact);
-__host__ uint32_t release_worker(struct worker_t *worker);
 
 #endif
