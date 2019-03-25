@@ -383,7 +383,7 @@ void Device::Initialize()
   cudaSetDeviceFlags(cudaDeviceScheduleAuto);
   cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
 
-  uint32_t nonces_per_run = (memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);
+  uint32_t nonces_per_run = ((size_t) memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);
   nonces_per_run = (nonces_per_run / BLAKE2B_THREADS_PER_BLOCK) * BLAKE2B_THREADS_PER_BLOCK;
   size_t mem_size = sizeof(block_g) * NIMIQ_ARGON2_COST * nonces_per_run;
 
