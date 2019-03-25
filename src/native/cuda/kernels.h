@@ -25,6 +25,8 @@
 #define NIMIQ_ARGON2_SALT_LEN 11
 #define NIMIQ_ARGON2_COST 512
 
+#define MEMORY_COST NIMIQ_ARGON2_COST
+
 struct __attribute__((packed)) nimiq_block_header
 {
     // Big endian
@@ -76,9 +78,9 @@ struct worker_t
     dim3 find_nonce_threads;
 };
 
-__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t memory_cost, uint32_t start_nonce);
-__global__ void argon2d(struct block_g *memory, uint32_t memory_cost);
-__global__ void get_nonce(struct block_g *memory, uint32_t memory_cost, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
+__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce);
+__global__ void argon2(struct block_g *memory);
+__global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
 
 __host__ uint32_t initialize_worker(struct worker_t *worker, int device, size_t memory);
 __host__ uint32_t set_block_header(struct worker_t *worker, nimiq_block_header *header);

@@ -327,7 +327,7 @@ __device__ void argon2_step(
     argon2_core(memory, mem_curr, prev, tmp, thread, ref_index);
 }
 
-__global__ void argon2d(struct block_g *memory, uint32_t memory_cost)
+__global__ void argon2(struct block_g *memory)
 {
     extern __shared__ struct block_l shared[];
 
@@ -335,7 +335,7 @@ __global__ void argon2d(struct block_g *memory, uint32_t memory_cost)
     uint32_t thread = threadIdx.x;
 
     /* select job's memory region: */
-    memory += (size_t)job_id * memory_cost;
+    memory += (size_t)job_id * MEMORY_COST;
 
     struct block_th prev;
     struct block_l *tmp = &shared[0];
@@ -346,7 +346,7 @@ __global__ void argon2d(struct block_g *memory, uint32_t memory_cost)
 
     load_block(&prev, mem_prev, thread);
 
-    for (uint32_t offset = 2; offset < memory_cost; ++offset) {
+    for (uint32_t offset = 2; offset < MEMORY_COST; ++offset) {
         argon2_step(memory, mem_curr, &prev, tmp, thread, offset);
         mem_curr++;
     }

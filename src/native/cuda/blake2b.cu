@@ -353,17 +353,17 @@ __device__ void hash_last_block(struct block_g *memory, uint64_t *hash)
     hash[3] = h[3];
 }
 
-__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t memory_cost, uint32_t start_nonce)
+__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce)
 {
     uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
-    memory += (size_t)thread * memory_cost;
+    memory += (size_t)thread * MEMORY_COST;
     fill_first_blocks(inseed, memory, start_nonce + thread);
 }
 
-__global__ void get_nonce(struct block_g *memory, uint32_t memory_cost, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce)
+__global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce)
 {
     uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
-    memory += (size_t)(thread + 1) * memory_cost - 1;
+    memory += (size_t)(thread + 1) * MEMORY_COST - 1;
 
     uint8_t hash[ARGON2_HASH_LENGTH];
     uint8_t target[ARGON2_HASH_LENGTH];
