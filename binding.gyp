@@ -1,11 +1,11 @@
 {
   'targets': [{
-    'target_name': 'nimiq_cuda_miner',
+    'target_name': 'nimiq_miner_cuda',
     'sources': [
-      'src/native/argon2d.cu',
-      'src/native/blake2b.cu',
-      'src/native/kernels.cu',
-      'src/native/nimiq_cuda_miner.cc'
+      'src/native/cuda/argon2d.cu',
+      'src/native/cuda/blake2b.cu',
+      'src/native/cuda/kernels.cu',
+      'src/native/cuda/miner.cc'
     ],
     'rules': [{
       'extension': 'cu',
@@ -16,8 +16,8 @@
       'action': [
         'nvcc', '-Xcompiler', '-fpic', '-c',
         '-O3', '--ptxas-options=-v',
+        '-gencode', 'arch=compute_35,code=sm_35',
         '-gencode', 'arch=compute_61,code=sm_61',
-        '-gencode', 'arch=compute_75,code=sm_75',
         '-o', '<@(_outputs)', '<@(_inputs)'
       ]
     }],
@@ -31,6 +31,6 @@
     'library_dirs': [
       '/usr/local/cuda/lib64'
     ],
-    'cflags_c': ['-Wall', '-O3', '-fexceptions']
+    'cflags_cc': ['-Wall', '-O3', '-fexceptions']
   }]
 }

@@ -6,7 +6,7 @@ const Nimiq = require('@nimiq/core');
 const NanoPoolMiner = require('./src/NanoPoolMiner');
 const Log = Nimiq.Log;
 
-const TAG = 'CudaMiner';
+const TAG = 'SushiPoolMiner';
 const $ = {};
 
 Log.instance.level = 'info';
@@ -71,8 +71,8 @@ if (!config) {
         Log.i(TAG, `Found share. Nonce: ${block.header.nonce}`);
     });
     $.miner.on('hashrates-changed', hashrates => {
-        const totalHashRate = hashrates.reduce((a, b) => a + b);
-        Log.i(TAG, `Hashrate: ${humanHashrate(totalHashRate)} | ${hashrates.map((hr, idx) => `GPU${idx}: ${humanHashrate(hr)}`).join(' | ')}`);
+        const totalHashRate = hashrates.reduce((a, b) => a + b, 0);
+        Log.i(TAG, `Hashrate: ${humanHashrate(totalHashRate)} | ${hashrates.map((hr, idx) => `GPU${idx}: ${humanHashrate(hr)}`).filter(hr => hr).join(' | ')}`);
     });
 
     $.consensus.on('established', () => {

@@ -433,4 +433,4 @@ void MinerWorker::HandleOKCallback()
   callback->Call(2, argv, async_resource);
 }
 
-NODE_MODULE(nimiq_cuda_miner, Miner::Init);
+NODE_MODULE(nimiq_miner_cuda, Miner::Init);

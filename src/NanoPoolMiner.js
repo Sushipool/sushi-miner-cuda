@@ -1,5 +1,5 @@
 const Nimiq = require('@nimiq/core');
-const NativeMiner = require('bindings')('nimiq_cuda_miner.node');
+const NativeMiner = require('bindings')('nimiq_miner_cuda.node');
 
 const HASHRATE_MOVING_AVERAGE = 5; // seconds
 const HASHRATE_REPORT_INTERVAL = 5; // seconds
