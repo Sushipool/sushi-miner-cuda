@@ -300,9 +300,9 @@ __device__ void compute_ref_pos(uint32_t offset, uint32_t *ref_index)
 __device__ void argon2_core(
         struct block_g *memory, struct block_g *mem_curr,
         struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t ref_index)
+        uint32_t thread, uint32_t ref_index, uint32_t nonces_per_run)
 {
-    struct block_g *mem_ref = memory + ref_index;
+    struct block_g *mem_ref = memory + ref_index * nonces_per_run;
 
     load_block_xor(prev, mem_ref, thread);
     block_l_store(tmp, prev, thread);
@@ -317,14 +317,14 @@ __device__ void argon2_core(
 __device__ void argon2_step(
         struct block_g *memory, struct block_g *mem_curr,
         struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t offset)
+        uint32_t thread, uint32_t offset, uint32_t nonces_per_run)
 {
     uint64_t v = u64_shuffle(prev->a, 0);
     uint32_t ref_index = u64_lo(v);
 
     compute_ref_pos(offset, &ref_index);
 
-    argon2_core(memory, mem_curr, prev, tmp, thread, ref_index);
+    argon2_core(memory, mem_curr, prev, tmp, thread, ref_index, nonces_per_run);
 }
 
 __global__ void argon2(struct block_g *memory)
@@ -333,21 +333,22 @@ __global__ void argon2(struct block_g *memory)
 
     uint32_t job_id = blockIdx.y;
     uint32_t thread = threadIdx.x;
+    uint32_t nonces_per_run = gridDim.y * blockDim.y;
 
     /* select job's memory region: */
-    memory += (size_t)job_id * MEMORY_COST;
+    memory += job_id;
 
     struct block_th prev;
     struct block_l *tmp = &shared[0];
 
     struct block_g *mem_lane = memory;
-    struct block_g *mem_prev = mem_lane + 1;
-    struct block_g *mem_curr = mem_lane + 2;
+    struct block_g *mem_prev = mem_lane + nonces_per_run;
+    struct block_g *mem_curr = mem_lane + 2 * nonces_per_run;
 
     load_block(&prev, mem_prev, thread);
 
     for (uint32_t offset = 2; offset < MEMORY_COST; ++offset) {
-        argon2_step(memory, mem_curr, &prev, tmp, thread, offset);
-        mem_curr++;
+        argon2_step(memory, mem_curr, &prev, tmp, thread, offset, nonces_per_run);
+        mem_curr += nonces_per_run;
     }
 }

@@ -380,7 +380,7 @@ void Device::Initialize()
 
   cudaSetDevice(device);
   cudaDeviceReset();
-  cudaSetDeviceFlags(cudaDeviceScheduleAuto);
+  cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); // cudaDeviceScheduleAuto
   cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
 
   uint32_t nonces_per_run = ((size_t) memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);

@@ -257,7 +257,7 @@ __device__ void fill_block(struct prehash_seed *phseed, struct block_g *memory)
     *(dst++) = h[7];
 }
 
-__device__ void fill_first_blocks(uint64_t *inseed, struct block_g *memory, uint32_t nonce)
+__device__ void fill_first_blocks(uint64_t *inseed, struct block_g *memory, uint32_t nonce, uint32_t nonces_per_run)
 {
     struct prehash_seed phs = {ARGON2_BLOCK_SIZE};
 
@@ -267,7 +267,7 @@ __device__ void fill_first_blocks(uint64_t *inseed, struct block_g *memory, uint
     fill_block(&phs, memory);
 
     phs.block = 1;
-    fill_block(&phs, memory + 1);
+    fill_block(&phs, memory + nonces_per_run);
 }
 
 __device__ void compact_to_target(uint32_t share_compact, uint8_t *target)
@@ -355,15 +355,20 @@ __device__ void hash_last_block(struct block_g *memory, uint64_t *hash)
 
 __global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce)
 {
-    uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
-    memory += (size_t)thread * MEMORY_COST;
-    fill_first_blocks(inseed, memory, start_nonce + thread);
+    uint32_t job_id = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t nonce = start_nonce + job_id;
+    uint32_t nonces_per_run = gridDim.x * blockDim.x;
+
+    memory += job_id;
+
+    fill_first_blocks(inseed, memory, nonce, nonces_per_run);
 }
 
 __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce)
 {
-    uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
-    memory += (size_t)(thread + 1) * MEMORY_COST - 1;
+    uint32_t job_id = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t nonces_per_run = gridDim.x * blockDim.x;
+    memory += job_id + nonces_per_run * (MEMORY_COST - 1);
 
     uint8_t hash[ARGON2_HASH_LENGTH];
     uint8_t target[ARGON2_HASH_LENGTH];
@@ -373,6 +378,6 @@ __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t
 
     if (is_proof_of_work(hash, target))
     {
-        atomicCAS(nonce, 0, start_nonce + thread);
+        atomicCAS(nonce, 0, start_nonce + job_id);
     }
 }
