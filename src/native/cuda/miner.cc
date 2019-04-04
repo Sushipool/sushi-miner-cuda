@@ -408,7 +408,7 @@ void Device::Initialize()
   }
 
   worker.init_memory_blocks = dim3(nonces_per_run / BLAKE2B_THREADS_PER_BLOCK);
-  worker.init_memory_threads = dim3(BLAKE2B_THREADS_PER_BLOCK);
+  worker.init_memory_threads = dim3(BLAKE2B_THREADS_PER_BLOCK, 2);
 
   worker.argon2_blocks = dim3(1, nonces_per_run);
   worker.argon2_threads = dim3(THREADS_PER_LANE, 1);
