@@ -25,18 +25,29 @@ __constant__ static const uint8_t sigma[12][16] = {
     {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
 };
 
-struct __attribute__((packed)) prehash_seed
-{
-    uint32_t hashlen;
-    uint64_t initial_hash[8];
-    uint32_t block;
-    uint32_t lane;
-    uint32_t padding[13];
-};
-
 __device__ __forceinline__ uint64_t rotr64(uint64_t x, uint32_t n)
 {
     return (x >> n) | (x << (64 - n));
+}
+
+__device__ __forceinline__ uint32_t swap32(uint32_t x)
+{
+    return ((x & 0x000000FF) << 24)
+        | ((x & 0x0000FF00) << 8)
+        | ((x & 0x00FF0000) >> 8)
+        | ((x & 0xFF000000) >> 24);
+}
+
+__device__ __forceinline__ uint64_t swap64(uint64_t x)
+{
+    return ((x & 0x00000000000000FFUL) << 56)
+        | ((x & 0x000000000000FF00UL) << 40)
+        | ((x & 0x0000000000FF0000UL) << 24)
+        | ((x & 0x00000000FF000000UL) <<  8)
+        | ((x & 0x000000FF00000000UL) >>  8)
+        | ((x & 0x0000FF0000000000UL) >> 24)
+        | ((x & 0x00FF000000000000UL) >> 40)
+        | ((x & 0xFF00000000000000UL) >> 56);
 }
 
 __device__ void blake2b_init(uint64_t *h, uint32_t hashlen)
@@ -97,7 +108,7 @@ __device__ void blake2b_compress(uint64_t *h, uint64_t *m, uint32_t bytes_compre
     v[15] = IV7;
 
     #pragma unroll
-    for(int r = 0; r < 12; r++)
+    for (uint32_t r = 0; r < 12; r++)
     {
       ROUND();
     }
@@ -112,14 +123,6 @@ __device__ void blake2b_compress(uint64_t *h, uint64_t *m, uint32_t bytes_compre
     h[7] = h[7] ^ v[7] ^ v[15];
 }
 
-__device__ __forceinline__ uint32_t swap32(uint32_t value)
-{
-    return ((value & 0xFF000000) >> 24)
-        | ((value & 0x00FF0000) >> 8)
-        | ((value & 0x0000FF00) << 8)
-        | ((value & 0x000000FF) << 24);
-}
-
 __device__ __forceinline__ void set_nonce(uint64_t *inseed, uint32_t nonce)
 {
     // bytes 170-173
@@ -127,7 +130,7 @@ __device__ __forceinline__ void set_nonce(uint64_t *inseed, uint32_t nonce)
     inseed[21] = (inseed[21] & 0xFFFF00000000FFFFUL) | (n << 16);
 }
 
-__device__ void initial_hash(uint64_t *inseed, uint32_t nonce, uint64_t *hash)
+__device__ void initial_hash(uint64_t *hash, uint64_t *inseed, uint32_t nonce)
 {
     uint64_t is[32];
     memcpy(is, inseed, sizeof(is));
@@ -138,102 +141,98 @@ __device__ void initial_hash(uint64_t *inseed, uint32_t nonce, uint64_t *hash)
     blake2b_compress(hash, &is[BLAKE2B_QWORDS_IN_BLOCK], ARGON2_INITIAL_SEED_SIZE, true);
 }
 
-__device__ void fill_block(struct prehash_seed *phseed, struct block_g *memory)
+__device__ void fill_first_block(struct block_g *memory, uint64_t *inseed, uint32_t nonce, uint32_t block)
 {
-    uint64_t h[8];
+    uint64_t hash[8];
+    initial_hash(hash, inseed, nonce);
+
+    uint32_t prehash_seed[32] = {ARGON2_BLOCK_SIZE};
+    #pragma unroll
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        prehash_seed[2 * i + 1] = (uint) hash[i];
+        prehash_seed[2 * i + 2] = (uint) (hash[i] >> 32);
+    }
+    prehash_seed[17] = block;
+
     uint64_t buffer[BLAKE2B_QWORDS_IN_BLOCK] = {0};
     uint64_t *dst = memory->data;
 
     // V1
-    blake2b_init(h, BLAKE2B_HASH_LENGTH);
-    blake2b_compress(h, (uint64_t *)phseed, ARGON2_PREHASH_SEED_SIZE, true);
+    blake2b_init(hash, BLAKE2B_HASH_LENGTH);
+    blake2b_compress(hash, (uint64_t *) prehash_seed, ARGON2_PREHASH_SEED_SIZE, true);
 
-    *(dst++) = h[0];
-    *(dst++) = h[1];
-    *(dst++) = h[2];
-    *(dst++) = h[3];
+    *(dst++) = hash[0];
+    *(dst++) = hash[1];
+    *(dst++) = hash[2];
+    *(dst++) = hash[3];
 
     // V2-Vr
     for (int r = 2; r < 2 * ARGON2_BLOCK_SIZE / BLAKE2B_HASH_LENGTH; r++)
     {
-        buffer[0] = h[0];
-        buffer[1] = h[1];
-        buffer[2] = h[2];
-        buffer[3] = h[3];
-        buffer[4] = h[4];
-        buffer[5] = h[5];
-        buffer[6] = h[6];
-        buffer[7] = h[7];
+        buffer[0] = hash[0];
+        buffer[1] = hash[1];
+        buffer[2] = hash[2];
+        buffer[3] = hash[3];
+        buffer[4] = hash[4];
+        buffer[5] = hash[5];
+        buffer[6] = hash[6];
+        buffer[7] = hash[7];
 
-        blake2b_init(h, BLAKE2B_HASH_LENGTH);
-        blake2b_compress(h, buffer, BLAKE2B_HASH_LENGTH, true);
+        blake2b_init(hash, BLAKE2B_HASH_LENGTH);
+        blake2b_compress(hash, buffer, BLAKE2B_HASH_LENGTH, true);
 
-        *(dst++) = h[0];
-        *(dst++) = h[1];
-        *(dst++) = h[2];
-        *(dst++) = h[3];
+        *(dst++) = hash[0];
+        *(dst++) = hash[1];
+        *(dst++) = hash[2];
+        *(dst++) = hash[3];
     }
 
-    *(dst++) = h[4];
-    *(dst++) = h[5];
-    *(dst++) = h[6];
-    *(dst++) = h[7];
+    *(dst++) = hash[4];
+    *(dst++) = hash[5];
+    *(dst++) = hash[6];
+    *(dst++) = hash[7];
 }
 
-__device__ void fill_first_block(struct block_g *memory, uint64_t *inseed, uint32_t nonce, uint32_t block)
+__device__ void compact_to_target(uint32_t share_compact, uint64_t *target)
 {
-    struct prehash_seed phs = {ARGON2_BLOCK_SIZE};
+    uint32_t offset = (share_compact >> 24) - 3; // offset in bytes
+    uint64_t value = share_compact & 0xFFFFFF;
+    uint64_t hi = value >> ((8 - offset & 0x7) << 3);
+    uint64_t lo = value << ((offset & 0x7) << 3); // value << (8 * (offset % 8))
 
-    initial_hash(inseed, nonce, phs.initial_hash);
-
-    phs.block = block;
-    fill_block(&phs, memory);
+    target[0] = (offset >= 24) ? lo : (offset > 20) ? hi : 0;
+    target[1] = (offset >= 24) ? 0 : (offset >= 16) ? lo : (offset > 12) ? hi : 0;
+    target[2] = (offset >= 16) ? 0 : (offset >= 8) ? lo : (offset > 4) ? hi : 0;
+    target[3] = (offset < 8) ? lo : 0;
 }
 
-__device__ void compact_to_target(uint32_t share_compact, uint8_t *target)
+__device__ bool is_proof_of_work(uint64_t *hash, uint64_t *target)
 {
-    uint32_t offset = (31 - (share_compact >> 24)); // offset in bytes
-    uint32_t value = share_compact & 0x00FFFFFF;
-
-#pragma unroll
-    for (int i = 0; i < ARGON2_HASH_LENGTH; i++)
+    #pragma unroll
+    for (uint32_t i = 0; i < 4; i++)
     {
-        target[i] = 0;
-    }
-    target[++offset] = (uint8_t)(value >> 16);
-    target[++offset] = (uint8_t)(value >> 8);
-    target[++offset] = (uint8_t)(value);
-}
-
-__device__ bool is_proof_of_work(uint8_t *hash, uint8_t *target)
-{
-#pragma unroll
-    for (int i = 0; i < ARGON2_HASH_LENGTH; i++)
-    {
-        if (hash[i] < target[i])
-            return true;
-        if (hash[i] > target[i])
-            return false;
+        if (swap64(hash[i]) < target[i]) return true;
+        if (swap64(hash[i]) > target[i]) return false;
     }
     return true;
 }
 
 __device__ void hash_last_block(struct block_g *memory, uint64_t *hash)
 {
-    uint64_t h[8];
     uint64_t buffer[BLAKE2B_QWORDS_IN_BLOCK];
     uint32_t hi, lo;
     uint32_t bytes_compressed = 0;
     uint32_t bytes_remaining = ARGON2_BLOCK_SIZE;
     uint32_t *src = (uint32_t *)memory->data;
 
-    blake2b_init(h, ARGON2_HASH_LENGTH);
+    blake2b_init(hash, ARGON2_HASH_LENGTH);
 
     hi = *(src++);
     buffer[0] = ARGON2_HASH_LENGTH | ((uint64_t)hi << 32);
 
-#pragma unroll
-    for (int i = 1; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+    #pragma unroll
+    for (uint32_t i = 1; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
     {
         lo = *(src++);
         hi = *(src++);
@@ -242,12 +241,12 @@ __device__ void hash_last_block(struct block_g *memory, uint64_t *hash)
 
     bytes_compressed += BLAKE2B_BLOCK_SIZE;
     bytes_remaining -= (BLAKE2B_BLOCK_SIZE - sizeof(uint32_t));
-    blake2b_compress(h, buffer, bytes_compressed, false);
+    blake2b_compress(hash, buffer, bytes_compressed, false);
 
     while (bytes_remaining > BLAKE2B_BLOCK_SIZE)
     {
-#pragma unroll
-        for (int i = 0; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+        #pragma unroll
+        for (uint32_t i = 0; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
         {
             lo = *(src++);
             hi = *(src++);
@@ -255,22 +254,17 @@ __device__ void hash_last_block(struct block_g *memory, uint64_t *hash)
         }
         bytes_compressed += BLAKE2B_BLOCK_SIZE;
         bytes_remaining -= BLAKE2B_BLOCK_SIZE;
-        blake2b_compress(h, buffer, bytes_compressed, false);
+        blake2b_compress(hash, buffer, bytes_compressed, false);
     }
 
     buffer[0] = *src;
-#pragma unroll
-    for (int i = 1; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+    #pragma unroll
+    for (uint32_t i = 1; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
     {
         buffer[i] = 0;
     }
     bytes_compressed += bytes_remaining;
-    blake2b_compress(h, buffer, bytes_compressed, true);
-
-    hash[0] = h[0];
-    hash[1] = h[1];
-    hash[2] = h[2];
-    hash[3] = h[3];
+    blake2b_compress(hash, buffer, bytes_compressed, true);
 }
 
 __global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce)
@@ -290,11 +284,11 @@ __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t
     uint32_t nonces_per_run = gridDim.x * blockDim.x;
     memory += job_id + nonces_per_run * (MEMORY_COST - 1);
 
-    uint8_t hash[ARGON2_HASH_LENGTH];
-    uint8_t target[ARGON2_HASH_LENGTH];
+    uint64_t hash[8];
+    uint64_t target[4];
 
     compact_to_target(share_compact, target);
-    hash_last_block(memory, (uint64_t *)hash);
+    hash_last_block(memory, hash);
 
     if (is_proof_of_work(hash, target))
     {
