@@ -29,6 +29,7 @@ SOFTWARE.
 
 #include "kernels.h"
 
+#define LDS_CACHE_SIZE 6
 
 __device__ uint64_t u64_build(uint32_t hi, uint32_t lo)
 {
@@ -249,43 +250,54 @@ __device__ uint32_t get_ref_pos(struct block_th *prev, uint32_t curr_index)
     return ref_index;
 }
 
-__device__ void argon2_core(struct block_g *memory, 
-    uint32_t curr_index, uint32_t ref_index, uint32_t nonces_per_run,
-    struct block_th *prev, struct block_g *buf, uint32_t thread)
+__device__ void argon2_core(struct block_g *memory, uint32_t curr_index, uint32_t ref_index,
+                            struct block_th *prev, struct block_th *tmp, struct block_g *cache,
+                            uint32_t thread)
 {
-    struct block_g *mem_curr = memory + curr_index * nonces_per_run;
-    struct block_g *mem_ref = memory + ref_index * nonces_per_run;
-    struct block_th tmp;
+    if (ref_index < 2 + LDS_CACHE_SIZE && ref_index >= 2)
+    {
+        load_block_xor(prev, &cache[ref_index - 2], thread);
+    }
+    else
+    {
+        struct block_g *mem_ref = memory + ref_index;
+        load_block_xor(prev, mem_ref, thread);
+    }
 
-    load_block_xor(prev, mem_ref, thread);
-    move_block(&tmp, prev);
+    move_block(tmp, prev);
 
     shuffle_block(prev, thread);
 
-    xor_block(prev, &tmp);
+    xor_block(prev, tmp);
 
-    store_block(mem_curr, prev, thread);
+    if (curr_index < 2 + LDS_CACHE_SIZE && curr_index >= 2)
+    {
+        store_block(&cache[curr_index - 2], prev, thread);
+    }
+    else
+    {
+        struct block_g *mem_curr = memory + curr_index;
+        store_block(mem_curr, prev, thread);
+    }
 }
 
 __global__ void argon2(struct block_g *memory)
 {
-    __shared__ struct block_g shared[1];
+    __shared__ struct block_g cache[LDS_CACHE_SIZE];
 
     uint32_t job_id = blockIdx.y;
     uint32_t thread = threadIdx.x;
-    uint32_t nonces_per_run = gridDim.y * blockDim.y;
 
     /* select job's memory region: */
-    memory += job_id;
+    memory += (size_t)job_id * MEMORY_COST;
 
-    struct block_th prev;
-    struct block_g *buf = &shared[0];
+    struct block_th prev, tmp;
 
-    load_block(&prev, memory + nonces_per_run, thread);
+    load_block(&prev, memory + 1, thread);
 
     for (uint32_t curr_index = 2; curr_index < MEMORY_COST; curr_index++)
     {
         uint32_t ref_index = get_ref_pos(&prev, curr_index);
-        argon2_core(memory, curr_index, ref_index, nonces_per_run, &prev, buf, thread);
+        argon2_core(memory, curr_index, ref_index, &prev, &tmp, cache, thread);
     }
 }

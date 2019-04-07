@@ -271,18 +271,16 @@ __global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t s
 {
     uint32_t job_id = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t nonce = start_nonce + job_id;
-    uint32_t nonces_per_run = gridDim.x * blockDim.x;
     uint32_t block = threadIdx.y;
 
-    memory += job_id + block * nonces_per_run;
+    memory += (size_t)job_id * MEMORY_COST + block;
     fill_first_block(memory, inseed, nonce, block);
 }
 
 __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce)
 {
     uint32_t job_id = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t nonces_per_run = gridDim.x * blockDim.x;
-    memory += job_id + nonces_per_run * (MEMORY_COST - 1);
+    memory += (size_t)(job_id + 1) * MEMORY_COST - 1;
 
     uint64_t hash[8];
     uint64_t target[4];
