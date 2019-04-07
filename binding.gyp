@@ -18,6 +18,7 @@
         '-O3', '--ptxas-options=-v',
         '-gencode', 'arch=compute_35,code=sm_35',
         '-gencode', 'arch=compute_61,code=sm_61',
+        '-gencode', 'arch=compute_75,code=sm_75',
         '-o', '<@(_outputs)', '<@(_inputs)'
       ]
     }],
