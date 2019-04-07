@@ -54,12 +54,8 @@ __device__ uint64_t u64_shuffle(uint64_t v, uint32_t thread)
     return u64_build(hi, lo);
 }
 
-struct block_l {
-    uint32_t lo[ARGON2_QWORDS_IN_BLOCK];
-    uint32_t hi[ARGON2_QWORDS_IN_BLOCK];
-};
-
-struct block_th {
+struct block_th
+{
     uint64_t a, b, c, d;
 };
 
@@ -100,8 +96,7 @@ __device__ void xor_block(struct block_th *dst, const struct block_th *src)
     dst->d ^= src->d;
 }
 
-__device__ void load_block(struct block_th *dst, const struct block_g *src,
-                           uint32_t thread)
+__device__ void load_block(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     dst->a = src->data[0 * THREADS_PER_LANE + thread];
     dst->b = src->data[1 * THREADS_PER_LANE + thread];
@@ -109,8 +104,7 @@ __device__ void load_block(struct block_th *dst, const struct block_g *src,
     dst->d = src->data[3 * THREADS_PER_LANE + thread];
 }
 
-__device__ void load_block_xor(struct block_th *dst, const struct block_g *src,
-                               uint32_t thread)
+__device__ void load_block_xor(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     dst->a ^= src->data[0 * THREADS_PER_LANE + thread];
     dst->b ^= src->data[1 * THREADS_PER_LANE + thread];
@@ -118,51 +112,12 @@ __device__ void load_block_xor(struct block_th *dst, const struct block_g *src,
     dst->d ^= src->data[3 * THREADS_PER_LANE + thread];
 }
 
-__device__ void store_block(struct block_g *dst, const struct block_th *src,
-                            uint32_t thread)
+__device__ void store_block(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
     dst->data[0 * THREADS_PER_LANE + thread] = src->a;
     dst->data[1 * THREADS_PER_LANE + thread] = src->b;
     dst->data[2 * THREADS_PER_LANE + thread] = src->c;
     dst->data[3 * THREADS_PER_LANE + thread] = src->d;
-}
-
-__device__ void block_l_store(struct block_l *dst, const struct block_th *src,
-    uint32_t thread)
-{
-    dst->lo[0 * THREADS_PER_LANE + thread] = u64_lo(src->a);
-    dst->hi[0 * THREADS_PER_LANE + thread] = u64_hi(src->a);
-
-    dst->lo[1 * THREADS_PER_LANE + thread] = u64_lo(src->b);
-    dst->hi[1 * THREADS_PER_LANE + thread] = u64_hi(src->b);
-
-    dst->lo[2 * THREADS_PER_LANE + thread] = u64_lo(src->c);
-    dst->hi[2 * THREADS_PER_LANE + thread] = u64_hi(src->c);
-
-    dst->lo[3 * THREADS_PER_LANE + thread] = u64_lo(src->d);
-    dst->hi[3 * THREADS_PER_LANE + thread] = u64_hi(src->d);
-}
-
-__device__ void block_l_load_xor(struct block_th *dst,
-       const struct block_l *src, uint32_t thread)
-{
-    uint32_t lo, hi;
-
-    lo = src->lo[0 * THREADS_PER_LANE + thread];
-    hi = src->hi[0 * THREADS_PER_LANE + thread];
-    dst->a ^= u64_build(hi, lo);
-
-    lo = src->lo[1 * THREADS_PER_LANE + thread];
-    hi = src->hi[1 * THREADS_PER_LANE + thread];
-    dst->b ^= u64_build(hi, lo);
-
-    lo = src->lo[2 * THREADS_PER_LANE + thread];
-    hi = src->hi[2 * THREADS_PER_LANE + thread];
-    dst->c ^= u64_build(hi, lo);
-
-    lo = src->lo[3 * THREADS_PER_LANE + thread];
-    hi = src->hi[3 * THREADS_PER_LANE + thread];
-    dst->d ^= u64_build(hi, lo);
 }
 
 __device__ uint64_t rotr64(uint64_t x, uint32_t n)
@@ -225,13 +180,6 @@ __device__ void transpose(struct block_th *block, uint32_t thread)
     }
 }
 
-struct identity_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        return thread;
-    }
-};
-
 struct shift1_shuffle {
     __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
     {
@@ -290,46 +238,38 @@ __device__ void shuffle_block(struct block_th *block, uint32_t thread)
     apply_shuffle<unshift2_shuffle>(block, thread);
 }
 
-__device__ void compute_ref_pos(uint32_t offset, uint32_t *ref_index)
-{
-    uint32_t ref_area_size = offset - 1;
-    *ref_index = __umulhi(*ref_index, *ref_index);
-    *ref_index = ref_area_size - 1 - __umulhi(ref_area_size, *ref_index);
-}
-
-__device__ void argon2_core(
-        struct block_g *memory, struct block_g *mem_curr,
-        struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t ref_index, uint32_t nonces_per_run)
-{
-    struct block_g *mem_ref = memory + ref_index * nonces_per_run;
-
-    load_block_xor(prev, mem_ref, thread);
-    block_l_store(tmp, prev, thread);
-
-    shuffle_block(prev, thread);
-
-    block_l_load_xor(prev, tmp, thread);
-
-    store_block(mem_curr, prev, thread);
-}
-
-__device__ void argon2_step(
-        struct block_g *memory, struct block_g *mem_curr,
-        struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t offset, uint32_t nonces_per_run)
+__device__ uint32_t get_ref_pos(struct block_th *prev, uint32_t curr_index)
 {
     uint64_t v = u64_shuffle(prev->a, 0);
     uint32_t ref_index = u64_lo(v);
 
-    compute_ref_pos(offset, &ref_index);
+    uint32_t ref_area_size = curr_index - 1;
+    ref_index = __umulhi(ref_index, ref_index);
+    ref_index = ref_area_size - 1 - __umulhi(ref_area_size, ref_index);
+    return ref_index;
+}
 
-    argon2_core(memory, mem_curr, prev, tmp, thread, ref_index, nonces_per_run);
+__device__ void argon2_core(struct block_g *memory, 
+    uint32_t curr_index, uint32_t ref_index, uint32_t nonces_per_run,
+    struct block_th *prev, struct block_g *buf, uint32_t thread)
+{
+    struct block_g *mem_curr = memory + curr_index * nonces_per_run;
+    struct block_g *mem_ref = memory + ref_index * nonces_per_run;
+    struct block_th tmp;
+
+    load_block_xor(prev, mem_ref, thread);
+    move_block(&tmp, prev);
+
+    shuffle_block(prev, thread);
+
+    xor_block(prev, &tmp);
+
+    store_block(mem_curr, prev, thread);
 }
 
 __global__ void argon2(struct block_g *memory)
 {
-    extern __shared__ struct block_l shared[];
+    __shared__ struct block_g shared[1];
 
     uint32_t job_id = blockIdx.y;
     uint32_t thread = threadIdx.x;
@@ -339,16 +279,13 @@ __global__ void argon2(struct block_g *memory)
     memory += job_id;
 
     struct block_th prev;
-    struct block_l *tmp = &shared[0];
+    struct block_g *buf = &shared[0];
 
-    struct block_g *mem_lane = memory;
-    struct block_g *mem_prev = mem_lane + nonces_per_run;
-    struct block_g *mem_curr = mem_lane + 2 * nonces_per_run;
+    load_block(&prev, memory + nonces_per_run, thread);
 
-    load_block(&prev, mem_prev, thread);
-
-    for (uint32_t offset = 2; offset < MEMORY_COST; ++offset) {
-        argon2_step(memory, mem_curr, &prev, tmp, thread, offset, nonces_per_run);
-        mem_curr += nonces_per_run;
+    for (uint32_t curr_index = 2; curr_index < MEMORY_COST; curr_index++)
+    {
+        uint32_t ref_index = get_ref_pos(&prev, curr_index);
+        argon2_core(memory, curr_index, ref_index, nonces_per_run, &prev, buf, thread);
     }
 }
