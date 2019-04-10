@@ -14,11 +14,13 @@
       'rule_name': 'CUDA compiler',
       'process_outputs_as_sources': 1,
       'action': [
-        'nvcc', '-Xcompiler', '-fpic', '-c',
-        '-O3', '--ptxas-options=-v',
+        'nvcc', '-Xcompiler', '-fpic', '-c', '-O3',
         '-gencode', 'arch=compute_35,code=sm_35',
+        '-gencode', 'arch=compute_35,code=compute_35',
         '-gencode', 'arch=compute_61,code=sm_61',
+        '-gencode', 'arch=compute_61,code=compute_61',
         '-gencode', 'arch=compute_75,code=sm_75',
+        '-gencode', 'arch=compute_75,code=compute_75',
         '-o', '<@(_outputs)', '<@(_inputs)'
       ]
     }],
