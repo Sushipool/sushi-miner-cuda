@@ -1,5 +1,5 @@
 const Nimiq = require('@nimiq/core');
-const NativeMiner = require('bindings')('nimiq_miner_opencl.node');
+const NativeMiner = require('bindings')('nimiq_miner_cuda.node');
 
 const INITIAL_SEED_SIZE = 256;
 const MAX_NONCE = 2 ** 32;

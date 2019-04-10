@@ -12,8 +12,8 @@ PACKAGE_VERSION=$(cat package.json \
   | awk -F: '{ print $2 }' \
   | sed 's/[",]//g')
 PACKAGE_VERSION_NO_WHITESPACE="$(echo -e "${PACKAGE_VERSION}" | tr -d '[:space:]')"
-OUTFILE_GENERIC="sushi-miner-opencl-linux-${PACKAGE_VERSION_NO_WHITESPACE}.tar.gz"
-OUTFILE_HIVEOS="sushi-miner-opencl-${PACKAGE_VERSION_NO_WHITESPACE}.tar.gz"
+OUTFILE_GENERIC="sushi-miner-cuda-linux-${PACKAGE_VERSION_NO_WHITESPACE}.tar.gz"
+OUTFILE_HIVEOS="sushi-miner-cuda-${PACKAGE_VERSION_NO_WHITESPACE}.tar.gz"
 echo "Building ${OUTFILE_GENERIC}"
 export PACKAGING="1" # set to 1 so nimiq builds the optimised node files for all cpus
 
@@ -21,10 +21,10 @@ rm -rf node_modules
 yarn
 rm -rf dist
 mkdir dist
-pkg -t node10-linux -o sushi-miner-opencl index.js
-mv sushi-miner-opencl dist/sushi-miner-opencl
+pkg -t node10-linux -o sushi-miner-cuda index.js
+mv sushi-miner-cuda dist/sushi-miner-cuda
 
-cp build/Release/nimiq_miner_opencl.node dist/
+cp build/Release/nimiq_miner_cuda.node dist/
 cp node_modules/node-lmdb/build/Release/node-lmdb.node dist/
 cp node_modules/cpuid-git/build/Release/cpuid.node dist/
 cp node_modules/@nimiq/core/build/Release/*.node dist/
@@ -35,6 +35,6 @@ cp start_gpu.sh dist
 
 echo "Create tar.gz"
 tar cvzf ${OUTFILE_GENERIC} --transform 's,^[[:alnum:]]*/,,' dist/*
-tar cvzf ${OUTFILE_HIVEOS} --transform 's,^[[:alnum:]]*/,sushi-miner-opencl/,' dist/* hiveos/*
+tar cvzf ${OUTFILE_HIVEOS} --transform 's,^[[:alnum:]]*/,sushi-miner-cuda/,' dist/* hiveos/*
 mv ${OUTFILE_GENERIC} dist/
 mv ${OUTFILE_HIVEOS} dist/
