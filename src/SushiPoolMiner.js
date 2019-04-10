@@ -88,7 +88,7 @@ class SushiPoolMiner extends Nimiq.Observable {
                 this._onBalance(msg.balance, msg.confirmedBalance);
                 break;
             case 'new-block':
-                this._onNewBlock(Buffer.from(msg.blockHeader, 'base64'));
+                this._onNewBlock(Nimiq.BlockHeader.unserialize(Nimiq.BufferUtils.fromBase64(msg.blockHeader)));
                 break;
             case 'error':
                 Nimiq.Log.w(SushiPoolMiner, `Pool error: ${msg.reason}`);
@@ -97,9 +97,8 @@ class SushiPoolMiner extends Nimiq.Observable {
     }
 
     _startMining() {
-        const height = this._currentBlockHeader.readUInt32BE(134);
-        Nimiq.Log.i(SushiPoolMiner, `Starting work on block #${height}`);
-        this._miner.startMiningOnBlock(this._currentBlockHeader);
+        Nimiq.Log.i(SushiPoolMiner, `Starting work on block #${this._currentBlockHeader.height}`);
+        this._miner.startMiningOnBlock(this._currentBlockHeader.serialize());
     }
 
     _stopMining() {

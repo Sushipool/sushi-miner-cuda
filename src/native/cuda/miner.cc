@@ -99,6 +99,11 @@ Miner::Miner(int deviceCount) : deviceCount(deviceCount)
   {
     devices[i] = new Device(this, i);
   }
+
+  shareCompact = 0;
+  miningEnabled = false;
+  workId = 0;
+  startNonce = 0;
 }
 
 Miner::~Miner()
@@ -221,7 +226,7 @@ NAN_METHOD(Miner::StartMiningOnBlock)
   v8::Local<v8::Function> cbFunc = info[1].As<v8::Function>();
 
   Miner *miner = Nan::ObjectWrap::Unwrap<Miner>(info.This());
-  if (miner->shareCompact.load() == 0)
+  if (miner->shareCompact == 0)
   {
     return Nan::ThrowError(Nan::New("Share compact is not set.").ToLocalChecked());
   }
