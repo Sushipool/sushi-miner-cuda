@@ -2,8 +2,8 @@ const Nimiq = require('@nimiq/core');
 const NativeMiner = require('bindings')('nimiq_miner_cuda.node');
 
 // TODO: configurable interval
-const HASHRATE_MOVING_AVERAGE = 5; // seconds
-const HASHRATE_REPORT_INTERVAL = 5; // seconds
+const HASHRATE_MOVING_AVERAGE = 6; // measurements
+const HASHRATE_REPORT_INTERVAL = 10; // seconds
 
 class Miner extends Nimiq.Observable {
 
