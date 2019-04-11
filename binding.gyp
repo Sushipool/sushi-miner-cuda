@@ -29,7 +29,7 @@
       '/usr/local/cuda/include'
     ],
     'libraries': [
-      '-lcuda', '-lcudart'
+      '-lcuda', '-lcudart_static'
     ],
     'library_dirs': [
       '/usr/local/cuda/lib64'
