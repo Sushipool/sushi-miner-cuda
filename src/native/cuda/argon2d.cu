@@ -30,7 +30,7 @@ SOFTWARE.
 #include "kernels.h"
 
 #define LDS_CACHE_SIZE 4
-#define MEMORY_TRADEOFF 256
+#define MEMORY_TRADEOFF 192
 
 __device__ uint64_t u64_build(uint32_t hi, uint32_t lo)
 {
