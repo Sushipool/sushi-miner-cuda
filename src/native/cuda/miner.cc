@@ -18,7 +18,7 @@ class Device;
 class Miner : public Nan::ObjectWrap
 {
 public:
-  explicit Miner(int deviceCount);
+  explicit Miner();
   ~Miner();
 
   static NAN_MODULE_INIT(Init);
@@ -92,8 +92,14 @@ private:
 
 Nan::Persistent<v8::Function> Miner::constructor;
 
-Miner::Miner(int deviceCount) : deviceCount(deviceCount)
+Miner::Miner()
 {
+  cudaGetDeviceCount(&deviceCount);
+  if (deviceCount < 1)
+  {
+    throw std::runtime_error("Could not initialize miner. No CUDA devices found.");
+  }
+
   devices.resize(deviceCount);
   for (int i = 0; i < deviceCount; i++)
   {
@@ -156,16 +162,16 @@ NAN_METHOD(Miner::New)
     return Nan::ThrowError(Nan::New("Miner() must be called with new keyword.").ToLocalChecked());
   }
 
-  int deviceCount;
-  cudaGetDeviceCount(&deviceCount);
-  if (deviceCount < 1)
+  try
   {
-    return Nan::ThrowError(Nan::New("Could not initialize miner. No CUDA devices found.").ToLocalChecked());
+    Miner *miner = new Miner();
+    miner->Wrap(info.This());
+    info.GetReturnValue().Set(info.This());
   }
-
-  Miner *miner = new Miner(deviceCount);
-  miner->Wrap(info.This());
-  info.GetReturnValue().Set(info.This());
+  catch (std::exception &e)
+  {
+    return Nan::ThrowError(Nan::New(e.what()).ToLocalChecked());
+  }
 }
 
 NAN_METHOD(Miner::GetDevices)

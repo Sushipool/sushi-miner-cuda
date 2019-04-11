@@ -42,7 +42,7 @@ if (!config) {
         'nano': setupNanoPoolMiner
     }
     const createMiner = setup[consensusType];
-    createMiner(address, config, deviceData);
+    await createMiner(address, config, deviceData);
 
 })().catch(e => {
     console.error(e);
