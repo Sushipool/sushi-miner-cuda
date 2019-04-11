@@ -388,7 +388,7 @@ void Device::Initialize()
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); // cudaDeviceScheduleAuto
   cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
 
-  uint32_t nonces_per_run = ((size_t) memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);
+  uint32_t nonces_per_run = ((size_t)memory * ONE_MB) / (sizeof(block_g) * NIMIQ_ARGON2_COST);
   nonces_per_run = (nonces_per_run / BLAKE2B_THREADS_PER_BLOCK) * BLAKE2B_THREADS_PER_BLOCK;
   size_t mem_size = sizeof(block_g) * NIMIQ_ARGON2_COST * nonces_per_run;
 
@@ -397,19 +397,19 @@ void Device::Initialize()
   cudaError_t result = cudaMalloc(&worker.memory, mem_size);
   if (result != cudaSuccess)
   {
-    // TODO Exception
+    throw std::runtime_error("Could not allocate memory");
   }
 
   result = cudaMalloc(&worker.inseed, sizeof(initial_seed));
   if (result != cudaSuccess)
   {
-    // TODO Exception
+    throw std::runtime_error("Could not allocate memory");
   }
 
   result = cudaMalloc(&worker.nonce, sizeof(uint32_t));
   if (result != cudaSuccess)
   {
-    // TODO Exception
+    throw std::runtime_error("Could not allocate memory");
   }
 
   worker.init_memory_blocks = dim3(nonces_per_run / BLAKE2B_THREADS_PER_BLOCK);
@@ -446,7 +446,7 @@ void Device::SetBlockHeader(struct nimiq_block_header *blockHeader)
   cudaError_t result = cudaMemcpy(worker.inseed, &inseed, sizeof(initial_seed), cudaMemcpyHostToDevice);
   if (result != cudaSuccess)
   {
-    // TODO: Exception
+    throw std::runtime_error("Could not copy block header to device");
   }
 
   cudaMemset(worker.nonce, 0, sizeof(uint32_t)); // zero nonce
@@ -472,8 +472,6 @@ void Device::MineNonces(nimiq_block_header *blockHeader, const MinerProgress &pr
     uint32_t nonce = mine_nonces(&worker, startNonce, miner->GetShareCompact());
     progress.Send(&nonce, 1);
   }
-
-  // TODO: Catch: SetErrorMessage("Could not allocate memory.");
 }
 
 /*
@@ -487,7 +485,14 @@ MinerWorker::MinerWorker(Nan::Callback *callback, Device *device, nimiq_block_he
 
 void MinerWorker::Execute(const MinerProgress &progress)
 {
-  device->MineNonces(&blockHeader, progress);
+  try
+  {
+    device->MineNonces(&blockHeader, progress);
+  }
+  catch (std::exception &e)
+  {
+    SetErrorMessage(e.what());
+  }
 }
 
 void MinerWorker::HandleProgressCallback(const uint32_t *nonce, size_t count)
