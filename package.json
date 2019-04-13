@@ -1,9 +1,10 @@
 {
-  "name": "nimiq-cuda-miner",
-  "version": "1.0.0",
-  "description": "",
+  "name": "sushi-miner-cuda",
+  "version": "2.0.0",
   "main": "index.js",
   "homepage": "https://sushipool.com/",
+  "description": "",
+  "private": true,
   "author": {
     "name": "SushiPool Development Team",
     "url": "https://sushipool.com/"

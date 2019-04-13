@@ -29,7 +29,6 @@ SOFTWARE.
 
 #include "kernels.h"
 
-
 __device__ uint64_t u64_build(uint32_t hi, uint32_t lo)
 {
     return ((uint64_t)hi << 32) | (uint64_t)lo;
@@ -54,12 +53,8 @@ __device__ uint64_t u64_shuffle(uint64_t v, uint32_t thread)
     return u64_build(hi, lo);
 }
 
-struct block_l {
-    uint32_t lo[ARGON2_QWORDS_IN_BLOCK];
-    uint32_t hi[ARGON2_QWORDS_IN_BLOCK];
-};
-
-struct block_th {
+struct block_th
+{
     uint64_t a, b, c, d;
 };
 
@@ -100,8 +95,7 @@ __device__ void xor_block(struct block_th *dst, const struct block_th *src)
     dst->d ^= src->d;
 }
 
-__device__ void load_block(struct block_th *dst, const struct block_g *src,
-                           uint32_t thread)
+__device__ void load_block(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     dst->a = src->data[0 * THREADS_PER_LANE + thread];
     dst->b = src->data[1 * THREADS_PER_LANE + thread];
@@ -109,8 +103,7 @@ __device__ void load_block(struct block_th *dst, const struct block_g *src,
     dst->d = src->data[3 * THREADS_PER_LANE + thread];
 }
 
-__device__ void load_block_xor(struct block_th *dst, const struct block_g *src,
-                               uint32_t thread)
+__device__ void load_block_xor(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     dst->a ^= src->data[0 * THREADS_PER_LANE + thread];
     dst->b ^= src->data[1 * THREADS_PER_LANE + thread];
@@ -118,51 +111,12 @@ __device__ void load_block_xor(struct block_th *dst, const struct block_g *src,
     dst->d ^= src->data[3 * THREADS_PER_LANE + thread];
 }
 
-__device__ void store_block(struct block_g *dst, const struct block_th *src,
-                            uint32_t thread)
+__device__ void store_block(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
     dst->data[0 * THREADS_PER_LANE + thread] = src->a;
     dst->data[1 * THREADS_PER_LANE + thread] = src->b;
     dst->data[2 * THREADS_PER_LANE + thread] = src->c;
     dst->data[3 * THREADS_PER_LANE + thread] = src->d;
-}
-
-__device__ void block_l_store(struct block_l *dst, const struct block_th *src,
-    uint32_t thread)
-{
-    dst->lo[0 * THREADS_PER_LANE + thread] = u64_lo(src->a);
-    dst->hi[0 * THREADS_PER_LANE + thread] = u64_hi(src->a);
-
-    dst->lo[1 * THREADS_PER_LANE + thread] = u64_lo(src->b);
-    dst->hi[1 * THREADS_PER_LANE + thread] = u64_hi(src->b);
-
-    dst->lo[2 * THREADS_PER_LANE + thread] = u64_lo(src->c);
-    dst->hi[2 * THREADS_PER_LANE + thread] = u64_hi(src->c);
-
-    dst->lo[3 * THREADS_PER_LANE + thread] = u64_lo(src->d);
-    dst->hi[3 * THREADS_PER_LANE + thread] = u64_hi(src->d);
-}
-
-__device__ void block_l_load_xor(struct block_th *dst,
-       const struct block_l *src, uint32_t thread)
-{
-    uint32_t lo, hi;
-
-    lo = src->lo[0 * THREADS_PER_LANE + thread];
-    hi = src->hi[0 * THREADS_PER_LANE + thread];
-    dst->a ^= u64_build(hi, lo);
-
-    lo = src->lo[1 * THREADS_PER_LANE + thread];
-    hi = src->hi[1 * THREADS_PER_LANE + thread];
-    dst->b ^= u64_build(hi, lo);
-
-    lo = src->lo[2 * THREADS_PER_LANE + thread];
-    hi = src->hi[2 * THREADS_PER_LANE + thread];
-    dst->c ^= u64_build(hi, lo);
-
-    lo = src->lo[3 * THREADS_PER_LANE + thread];
-    hi = src->hi[3 * THREADS_PER_LANE + thread];
-    dst->d ^= u64_build(hi, lo);
 }
 
 __device__ uint64_t rotr64(uint64_t x, uint32_t n)
@@ -225,13 +179,6 @@ __device__ void transpose(struct block_th *block, uint32_t thread)
     }
 }
 
-struct identity_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        return thread;
-    }
-};
-
 struct shift1_shuffle {
     __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
     {
@@ -290,64 +237,158 @@ __device__ void shuffle_block(struct block_th *block, uint32_t thread)
     apply_shuffle<unshift2_shuffle>(block, thread);
 }
 
-__device__ void compute_ref_pos(uint32_t offset, uint32_t *ref_index)
-{
-    uint32_t ref_area_size = offset - 1;
-    *ref_index = __umulhi(*ref_index, *ref_index);
-    *ref_index = ref_area_size - 1 - __umulhi(ref_area_size, *ref_index);
-}
-
-__device__ void argon2_core(
-        struct block_g *memory, struct block_g *mem_curr,
-        struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t ref_index)
-{
-    struct block_g *mem_ref = memory + ref_index;
-
-    load_block_xor(prev, mem_ref, thread);
-    block_l_store(tmp, prev, thread);
-
-    shuffle_block(prev, thread);
-
-    block_l_load_xor(prev, tmp, thread);
-
-    store_block(mem_curr, prev, thread);
-}
-
-__device__ void argon2_step(
-        struct block_g *memory, struct block_g *mem_curr,
-        struct block_th *prev, struct block_l *tmp,
-        uint32_t thread, uint32_t offset)
+__device__ uint32_t compute_ref_index(struct block_th *prev, uint32_t curr_index)
 {
     uint64_t v = u64_shuffle(prev->a, 0);
     uint32_t ref_index = u64_lo(v);
 
-    compute_ref_pos(offset, &ref_index);
-
-    argon2_core(memory, mem_curr, prev, tmp, thread, ref_index);
+    uint32_t ref_area_size = curr_index - 1;
+    ref_index = __umulhi(ref_index, ref_index);
+    ref_index = ref_area_size - 1 - __umulhi(ref_area_size, ref_index);
+    return ref_index;
 }
 
-__global__ void argon2d(struct block_g *memory, uint32_t memory_cost)
+__device__ void load_block(struct block_th *dst,
+                           const struct block_g *memory,
+                           const struct block_g *cache, uint32_t cacheSize,
+                           uint32_t index, uint32_t thread)
 {
-    extern __shared__ struct block_l shared[];
+    if (index < 2 + cacheSize && index >= 2)
+    {
+        load_block(dst, cache + index - 2, thread);
+    }
+    else
+    {
+        load_block(dst, memory + index, thread);
+    }
+}
+
+__device__ void load_block_xor(struct block_th *dst,
+                               const struct block_g *memory,
+                               const struct block_g *cache, uint32_t cacheSize,
+                               uint32_t index, uint32_t thread)
+{
+    if (index < 2 + cacheSize && index >= 2)
+    {
+        load_block_xor(dst, cache + index - 2, thread);
+    }
+    else
+    {
+        load_block_xor(dst, memory + index, thread);
+    }
+}
+
+__device__ void store_block(struct block_g *memory,
+                            struct block_g *cache, uint32_t cacheSize,
+                            const struct block_th *src,
+                            uint32_t index, uint32_t thread)
+{
+    if (index < 2 + cacheSize && index >= 2)
+    {
+        store_block(cache + index - 2, src, thread);
+    }
+    else
+    {
+        store_block(memory + index, src, thread);
+    }
+}
+
+__device__ void get_ref_index(uint32_t *ref_index, bool *is_stored, const uint16_t *ref_indexes, uint32_t index)
+{
+    uint16_t ri = ref_indexes[index];
+    *ref_index = (ri & 0x7FFF);
+    *is_stored = (bool) (ri & 0x8000);
+}
+
+__device__ void set_ref_index(uint16_t *ref_indexes, uint32_t index, uint32_t ref_index, bool is_stored, uint32_t thread)
+{
+    if (thread == 0)
+    {
+        ref_indexes[index] = (is_stored ? 0x8000 : 0) | ref_index;
+    }
+    __syncwarp();
+}
+
+__device__ void compute_block_xor(struct block_th *dst,
+                                const struct block_g *memory,
+                                const struct block_g *cache, uint32_t cacheSize,
+                                uint32_t index, uint32_t ref_index, uint32_t thread)
+{
+    struct block_th prev, tmp;
+
+    load_block(&prev, memory, cache, cacheSize, index - 1, thread);
+    load_block_xor(&prev, memory, cache, cacheSize, ref_index, thread);
+
+    move_block(&tmp, &prev);
+    shuffle_block(&prev, thread);
+    xor_block(&prev, &tmp);
+
+    xor_block(dst, &prev);
+}
+
+__device__ void argon2_step(struct block_g *memory, struct block_g *cache, uint32_t cacheSize,
+                            uint16_t *ref_indexes, uint32_t memoryTradeoff,
+                            uint32_t curr_index, struct block_th *prev, bool *is_prev_stored, uint32_t thread)
+{
+    struct block_th tmp;
+    bool is_ref_stored = true;
+    bool is_curr_stored = true;
+
+    uint32_t ref_index = compute_ref_index(prev, curr_index);
+
+    if (curr_index >= memoryTradeoff)
+    {
+        if (ref_index >= memoryTradeoff && ref_index >= 2)
+        {
+            // what was the ref block of the current ref block?
+            uint32_t ref_ref_index;
+            get_ref_index(&ref_ref_index, &is_ref_stored, ref_indexes, ref_index);
+            if (!is_ref_stored)
+            {
+                compute_block_xor(prev, memory, cache, cacheSize, ref_index, ref_ref_index, thread);
+            }
+        }
+        is_curr_stored = !(*is_prev_stored && is_ref_stored) || (curr_index == MEMORY_COST - 1);
+
+        set_ref_index(ref_indexes, curr_index, ref_index, is_curr_stored, thread);
+    }
+
+    // load if it was not computed before 
+    if (is_ref_stored)
+    {
+        load_block_xor(prev, memory, cache, cacheSize, ref_index, thread);
+    }
+
+    move_block(&tmp, prev);
+    shuffle_block(prev, thread);
+    xor_block(prev, &tmp);
+
+    if (is_curr_stored)
+    {
+        store_block(memory, cache, cacheSize, prev, curr_index, thread);
+    }
+    *is_prev_stored = is_curr_stored;
+}
+
+__global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memoryTradeoff)
+{
+    extern __shared__ struct block_g cache[];
+    // ref_index of the current block, msb = 1 if current block is stored to global mem
+    __shared__ uint16_t ref_indexes[MEMORY_COST];
 
     uint32_t job_id = blockIdx.y;
     uint32_t thread = threadIdx.x;
 
     /* select job's memory region: */
-    memory += (size_t)job_id * memory_cost;
+    memory += (size_t)job_id * MEMORY_COST;
 
     struct block_th prev;
-    struct block_l *tmp = &shared[0];
+    bool is_prev_stored = true;
 
-    struct block_g *mem_lane = memory;
-    struct block_g *mem_prev = mem_lane + 1;
-    struct block_g *mem_curr = mem_lane + 2;
+    load_block(&prev, memory + 1, thread);
 
-    load_block(&prev, mem_prev, thread);
-
-    for (uint32_t offset = 2; offset < memory_cost; ++offset) {
-        argon2_step(memory, mem_curr, &prev, tmp, thread, offset);
-        mem_curr++;
+    for (uint32_t curr_index = 2; curr_index < MEMORY_COST; curr_index++)
+    {
+        argon2_step(memory, cache, cacheSize, ref_indexes, memoryTradeoff, curr_index, &prev, &is_prev_stored, thread);
     }
 }

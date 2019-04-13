@@ -25,6 +25,8 @@
 #define NIMIQ_ARGON2_SALT_LEN 11
 #define NIMIQ_ARGON2_COST 512
 
+#define MEMORY_COST NIMIQ_ARGON2_COST
+
 struct __attribute__((packed)) nimiq_block_header
 {
     // Big endian
@@ -61,28 +63,28 @@ struct block_g
     uint64_t data[ARGON2_QWORDS_IN_BLOCK];
 };
 
+// TODO Rename/split/move to another class
 struct worker_t
 {
-    int device;
     uint32_t nonces_per_run;
-    block_g *memory;
-    uint64_t *inseed;
-    uint32_t *nonce;
+    block_g **memory;
+    uint64_t **inseed;
+    uint32_t **nonce;
     dim3 init_memory_blocks;
     dim3 init_memory_threads;
     dim3 argon2_blocks;
     dim3 argon2_threads;
-    dim3 find_nonce_blocks;
-    dim3 find_nonce_threads;
+    dim3 get_nonce_blocks;
+    dim3 get_nonce_threads;
+    uint32_t cacheSize;
+    uint32_t memoryTradeoff;
 };
 
-__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t memory_cost, uint32_t start_nonce);
-__global__ void argon2d(struct block_g *memory, uint32_t memory_cost);
-__global__ void get_nonce(struct block_g *memory, uint32_t memory_cost, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
+__global__ void init_memory(struct block_g *memory, uint64_t *inseed, uint32_t start_nonce);
+__global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memoryTradeoff);
+__global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
 
-__host__ uint32_t initialize_worker(struct worker_t *worker, int device, size_t memory);
-__host__ uint32_t set_block_header(struct worker_t *worker, nimiq_block_header *header);
-__host__ uint32_t mine_nonces(struct worker_t *worker, uint32_t start_nonce, uint32_t share_compact);
-__host__ uint32_t release_worker(struct worker_t *worker);
+__host__ void set_block_header(struct worker_t *worker, uint32_t threadIndex, nimiq_block_header *block_header);
+__host__ uint32_t mine_nonces(struct worker_t *worker, uint32_t threadIndex, uint32_t start_nonce, uint32_t share_compact);
 
 #endif
