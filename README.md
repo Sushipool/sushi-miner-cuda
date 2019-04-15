@@ -1,5 +1,5 @@
 # Nimiq CUDA GPU Mining Client for Nvidia Cards
-[![Github All Releases](https://img.shields.io/github/downloads/Sushipool/nimiq-cuda-miner/total.svg)]()
+[![Github All Releases](https://img.shields.io/github/downloads/Sushipool/sushi-miner-cuda/total.svg)]()
 
 Optimized Nimiq GPU mining client that provides high-performance results, open source codebase, nano protocol, and a **0%** Dev for Nvidia graphics cards.
 
