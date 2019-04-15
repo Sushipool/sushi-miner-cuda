@@ -14,7 +14,7 @@ class Miner extends Nimiq.Observable {
         this._devices = this._miner.getDevices();
         this._devices.forEach((device, idx) => {
             const options = deviceOptions.forDevice(idx);
-            if (!options.enabled) {                
+            if (!options.enabled) {
                 device.enabled = false;
                 Nimiq.Log.i(`GPU #${idx}: ${device.name}. Disabled by user.`);
                 return;
@@ -58,6 +58,9 @@ class Miner extends Nimiq.Observable {
     }
 
     startMiningOnBlock(blockHeader) {
+        if (!this._hashRateTimer) {
+            this._hashRateTimer = setInterval(() => this._reportHashRate(), 1000 * HASHRATE_REPORT_INTERVAL);
+        }
         this._miner.startMiningOnBlock(blockHeader, (error, obj) => {
             if (error) {
                 throw error;
@@ -70,9 +73,6 @@ class Miner extends Nimiq.Observable {
             }
             this._hashes[obj.device] = (this._hashes[obj.device] || 0) + obj.noncesPerRun;
         });
-        if (!this._hashRateTimer) {
-            this._hashRateTimer = setInterval(() => this._reportHashRate(), 1000 * HASHRATE_REPORT_INTERVAL);
-        }
     }
 
     stop() {
