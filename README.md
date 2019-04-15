@@ -64,6 +64,17 @@ memory          Allocated memory in Mb for each device
 threads         Number of threads per GPU
                 Example: "threads": [1,1,2,2]
                 Default: 1                                               [array]
+                
+cache           Number of Argon2 blocks cached into the local GPU memory
+                Example: "cache": [2,2,4,4]
+                Notes: Nvidia 2080 TI = 2, Nvidia 1080 TI = 4, Nvidia 1060 = 2
+                Disable: [0]
+                Default: 4                                               [array]
+                
+memoryTradeoff  Performs extra computations to reduce memory access
+                Example: "memoryTradeoff": [192,192,192,192]
+                Disable: [512] 
+                Default: 192                                             [array]
 ```
 
 ### Links
