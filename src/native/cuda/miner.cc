@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -535,6 +536,14 @@ void Device::MineNonces(uint32_t threadIndex, nimiq_block_header *blockHeader, c
     uint32_t startNonce = miner->GetNextStartNonce(GetNoncesPerRun());
     // TODO: Handle startNonce overflow
     uint32_t nonce = mine_nonces(&worker, threadIndex, startNonce, miner->GetShareCompact());
+
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+      const char *errorMsg = cudaGetErrorString(error);
+      std::cerr << errorMsg << "\n";
+      std::exit(error);
+    }
 
     progress.Send(&nonce, 1);
   }

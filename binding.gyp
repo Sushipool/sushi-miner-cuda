@@ -52,6 +52,6 @@
     'library_dirs': [
       '/usr/local/cuda/lib64'
     ],
-    'cflags_cc': ['-Wall', '-march=native', '-std=c++11', '-O3', '-fexceptions']
+    'cflags_cc': ['-Wall', '-std=c++11', '-O3', '-fexceptions']
   }]
 }
