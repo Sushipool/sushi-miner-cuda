@@ -12,7 +12,7 @@ Optimized Nimiq GPU mining client that provides high-performance results, open s
 5. Build the project: `cd sushi-miner-cuda && npm install`.
 6. Copy miner.sample.conf to miner.conf: `cp miner.sample.conf miner.conf`.
 7. Edit miner.conf, specify your wallet address.
-8. Run the miner `UV_THREADPOOL_SIZE=12 nodejs index.js`. Ensure UV_THREADPOOL_SIZE is higher than a number of GPU in your system.
+8. Run the miner `UV_THREADPOOL_SIZE=12 nodejs index.js`. Ensure UV_THREADPOOL_SIZE is higher than a number of GPU * threads in your system.
 
 ## HiveOS Mining FlightSheet
 Use the following FlightSheet settings to start mining Nimiq with HiveOS.
@@ -63,7 +63,7 @@ memory          Allocated memory in Mb for each device
                 
 threads         Number of threads per GPU
                 Example: "threads": [1,1,2,2]
-                Default: 1                                               [array]
+                Default: 2                                               [array]
                 
 cache           Number of Argon2 blocks cached into the local GPU memory
                 Example: "cache": [2,2,4,4]
