@@ -150,8 +150,8 @@ __device__ void fill_first_block(struct block_g *memory, uint64_t *inseed, uint3
     #pragma unroll
     for (uint32_t i = 0; i < 8; i++)
     {
-        prehash_seed[2 * i + 1] = (uint) hash[i];
-        prehash_seed[2 * i + 2] = (uint) (hash[i] >> 32);
+        prehash_seed[2 * i + 1] = (uint32_t) hash[i];
+        prehash_seed[2 * i + 2] = (uint32_t) (hash[i] >> 32);
     }
     prehash_seed[17] = block;
 

@@ -12,18 +12,35 @@
       'inputs': ['<(RULE_INPUT_PATH)'],
       'outputs':[ '<(INTERMEDIATE_DIR)/<(RULE_INPUT_ROOT).o'],
       'rule_name': 'CUDA compiler',
-      'process_outputs_as_sources': 1,
-      'action': [
-        'nvcc', '-Xcompiler', '-fpic', '-c', '-O3',
-        '--default-stream', 'per-thread',
-        '-gencode', 'arch=compute_35,code=sm_35',
-        '-gencode', 'arch=compute_35,code=compute_35',
-        '-gencode', 'arch=compute_61,code=sm_61',
-        '-gencode', 'arch=compute_61,code=compute_61',
-        '-gencode', 'arch=compute_75,code=sm_75',
-        '-gencode', 'arch=compute_75,code=compute_75',
-        '-o', '<@(_outputs)', '<@(_inputs)'
-      ]
+      'conditions': [
+        ['OS=="win"', {
+            'process_outputs_as_sources': 0,
+            'action': [
+              'nvcc', '--std=c++11', '-c', '-O3',
+              '--default-stream=per-thread',
+              '--generate-code=arch=compute_35,code=sm_35',
+              '--generate-code=arch=compute_35,code=compute_35',
+              '--generate-code=arch=compute_61,code=sm_61',
+              '--generate-code=arch=compute_61,code=compute_61',
+              '--generate-code=arch=compute_75,code=sm_75',
+              '--generate-code=arch=compute_75,code=compute_75',
+              '-o', '<@(_outputs)', '<@(_inputs)'
+            ]
+          }, {
+            'process_outputs_as_sources': 1,
+            'action': [
+              'nvcc', '--std=c++11', '-Xcompiler', '-fpic', '-c', '-O3',
+              '--default-stream=per-thread',
+              '--generate-code=arch=compute_35,code=sm_35',
+              '--generate-code=arch=compute_35,code=compute_35',
+              '--generate-code=arch=compute_61,code=sm_61',
+              '--generate-code=arch=compute_61,code=compute_61',
+              '--generate-code=arch=compute_75,code=sm_75',
+              '--generate-code=arch=compute_75,code=compute_75',
+              '-o', '<@(_outputs)', '<@(_inputs)'
+            ]
+          }
+        ]]
     }],
     'include_dirs': [
       '<!(node -e "require(\'nan\')")',
@@ -35,6 +52,6 @@
     'library_dirs': [
       '/usr/local/cuda/lib64'
     ],
-    'cflags_cc': ['-Wall', '-O3', '-fexceptions']
+    'cflags_cc': ['-Wall', '-march=native', '-std=c++11', '-O3', '-fexceptions']
   }]
 }

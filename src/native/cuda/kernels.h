@@ -27,7 +27,15 @@
 
 #define MEMORY_COST NIMIQ_ARGON2_COST
 
-struct __attribute__((packed)) nimiq_block_header
+#ifdef _WIN32
+#pragma pack(push, 1)
+#endif
+
+struct
+#ifndef _WIN32
+    __attribute__((packed))
+#endif
+    nimiq_block_header
 {
     // Big endian
     uint16_t version;
@@ -41,7 +49,11 @@ struct __attribute__((packed)) nimiq_block_header
     uint32_t nonce;
 };
 
-struct __attribute__((packed)) initial_seed
+struct
+#ifndef _WIN32
+    __attribute__((packed))
+#endif
+    initial_seed
 {
     uint32_t lanes;
     uint32_t hash_len;
@@ -57,6 +69,10 @@ struct __attribute__((packed)) initial_seed
     uint32_t extra_len;
     uint8_t padding[59];
 };
+
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
 
 struct block_g
 {
