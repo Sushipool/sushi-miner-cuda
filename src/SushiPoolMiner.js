@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const Nimiq = require('@nimiq/core');
 const Miner = require('./Miner');
 const WebSocket = require('ws');
+const Utils = require('./Utils');
 
 const GENESIS_HASH_MAINNET = 'Jkqvik+YKKdsVQY12geOtGYwahifzANxC+6fZJyGnRI=';
 
@@ -43,10 +44,13 @@ class SushiPoolMiner extends Nimiq.Observable {
 
         this._ws.on('close', (code, reason) => {
             let timeout = Math.floor(Math.random() * 25) + 5;
-            Nimiq.Log.w(SushiPoolMiner, `Connection lost. Reconnecting in ${timeout} seconds`);
+            this._host = Utils.getNewHost(this._host);
+            Nimiq.Log.w(SushiPoolMiner, `Connection lost. Reconnecting in ${timeout} seconds to ${this._host}`);
             this._stopMining();
             if (!this._closed) {
-                setTimeout(() => this.connect(host, port), timeout * 1000);
+                setTimeout(() => {
+                    this.connect(this._host, port);
+                }, timeout * 1000);
             }
         });
 

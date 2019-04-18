@@ -27,6 +27,23 @@ exports.readConfigFile = function (fileName) {
     }
 }
 
+exports.getNewHost = function(currentHost) {
+    const FALLBACK_HOSTS = [
+        'eu.sushipool.com',
+        'us.sushipool.com',
+        'asia.sushipool.com'
+    ];
+    let idx = FALLBACK_HOSTS.indexOf(currentHost);
+    if (idx !== -1) {
+        // if current host is found in fallback hosts, then try the next one
+        idx = (idx + 1) % FALLBACK_HOSTS.length; 
+    } else { // otherwise just randomly choose one fallback host
+        idx = Math.floor(Math.random() * FALLBACK_HOSTS.length);
+    }
+    const newHost = FALLBACK_HOSTS[idx];
+    return newHost;
+}
+
 exports.getDeviceOptions = function (config) {
     const devices = Array.isArray(config.devices) ? config.devices : [];
     const memory = Array.isArray(config.memory) ? config.memory : [];
