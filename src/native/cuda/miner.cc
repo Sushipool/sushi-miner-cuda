@@ -31,7 +31,7 @@ public:
 
   uint32_t GetShareCompact();
   bool IsMiningEnabled();
-  uint32_t GetNextStartNonce(uint32_t noncesPerRun);
+  uint64_t GetNextStartNonce(uint32_t noncesPerRun);
   uint32_t GetWorkId();
 
 private:
@@ -42,7 +42,7 @@ private:
   std::atomic_uint_fast32_t shareCompact;
   std::atomic_bool miningEnabled;
   std::atomic_uint_fast32_t workId;
-  std::atomic_uint_fast32_t startNonce;
+  std::atomic_uint_fast64_t startNonce;
 };
 
 class Device
@@ -55,11 +55,12 @@ public:
   static NAN_SETTER(HandleSetters);
 
   bool IsEnabled();
-  void Initialize();
   uint32_t GetNoncesPerRun();
   uint32_t GetDeviceIndex();
-  uint32_t GetNumberOfThreads();
-  void MineNonces(uint32_t threadIndex, nimiq_block_header *blockHeader, const MinerProgress &progress);
+
+  void StartMiningOnBlock(const v8::Local<v8::Function> &cbFunc, uint32_t workId, nimiq_block_header *blockHeader);
+  void Initialize();
+  void MineNonces(uint32_t workId, uint32_t threadIndex, nimiq_block_header *blockHeader, const MinerProgress &progress);
 
 private:
   Miner *miner;
@@ -79,7 +80,7 @@ private:
 class MinerWorker : public Nan::AsyncProgressQueueWorker<uint32_t>
 {
 public:
-  MinerWorker(Nan::Callback *callback, Device *device, uint32_t threadIndex, nimiq_block_header blockHeader);
+  MinerWorker(Nan::Callback *callback, Device *device, uint32_t workId, uint32_t threadIndex, nimiq_block_header blockHeader);
 
   void Execute(const MinerProgress &progress);
   void HandleProgressCallback(const uint32_t *data, size_t count);
@@ -87,6 +88,7 @@ public:
 
 private:
   Device *device;
+  uint32_t workId;
   uint32_t threadIndex;
   nimiq_block_header blockHeader;
 };
@@ -135,7 +137,7 @@ bool Miner::IsMiningEnabled()
   return miningEnabled;
 }
 
-uint32_t Miner::GetNextStartNonce(uint32_t noncesPerRun)
+uint64_t Miner::GetNextStartNonce(uint32_t noncesPerRun)
 {
   return startNonce.fetch_add(noncesPerRun);
 }
@@ -246,7 +248,7 @@ NAN_METHOD(Miner::StartMiningOnBlock)
   }
 
   miner->miningEnabled = true;
-  miner->workId++;
+  uint32_t workId = ++miner->workId;
   miner->startNonce = 0; // TODO: Make startNonce consistent across threads. It can be incremented by the worker mining stale block.
 
   int enabledDevices = 0;
@@ -255,11 +257,7 @@ NAN_METHOD(Miner::StartMiningOnBlock)
     Device *device = miner->devices[deviceIndex];
     if (device->IsEnabled())
     {
-      device->Initialize();
-      for (uint32_t threadIndex = 0; threadIndex < device->GetNumberOfThreads(); threadIndex++)
-      {
-        Nan::AsyncQueueWorker(new MinerWorker(new Nan::Callback(cbFunc), device, threadIndex, *header));
-      }
+      device->StartMiningOnBlock(cbFunc, workId, header);
       enabledDevices++;
     }
   }
@@ -445,9 +443,15 @@ uint32_t Device::GetDeviceIndex()
   return deviceIndex;
 }
 
-uint32_t Device::GetNumberOfThreads()
+void Device::StartMiningOnBlock(const v8::Local<v8::Function> &cbFunc, uint32_t workId, nimiq_block_header *blockHeader)
 {
-  return threads;
+  Nan::HandleScope scope;
+
+  Initialize();
+  for (uint32_t threadIndex = 0; threadIndex < threads; threadIndex++)
+  {
+    Nan::AsyncQueueWorker(new MinerWorker(new Nan::Callback(cbFunc), this, workId, threadIndex, *blockHeader));
+  }
 }
 
 void Device::Initialize()
@@ -518,7 +522,7 @@ void Device::Initialize()
   initialized = true;
 }
 
-void Device::MineNonces(uint32_t threadIndex, nimiq_block_header *blockHeader, const MinerProgress &progress)
+void Device::MineNonces(uint32_t workId, uint32_t threadIndex, nimiq_block_header *blockHeader, const MinerProgress &progress)
 {
   std::lock_guard<std::mutex> lock(*mutexes[threadIndex]);
 
@@ -526,16 +530,20 @@ void Device::MineNonces(uint32_t threadIndex, nimiq_block_header *blockHeader, c
 
   set_block_header(&worker, threadIndex, blockHeader);
 
-  uint32_t workId = miner->GetWorkId();
   while (miner->IsMiningEnabled())
   {
     if (workId != miner->GetWorkId())
     {
       break;
     }
-    uint32_t startNonce = miner->GetNextStartNonce(GetNoncesPerRun());
-    // TODO: Handle startNonce overflow
-    uint32_t nonce = mine_nonces(&worker, threadIndex, startNonce, miner->GetShareCompact());
+    uint32_t noncesPerRun = GetNoncesPerRun();
+    uint64_t startNonce = miner->GetNextStartNonce(noncesPerRun);
+    if (startNonce + noncesPerRun > UINT32_MAX)
+    {
+      break;
+    }
+
+    uint32_t nonce = mine_nonces(&worker, threadIndex, (uint32_t)startNonce, miner->GetShareCompact());
 
     cudaError_t error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -553,8 +561,8 @@ void Device::MineNonces(uint32_t threadIndex, nimiq_block_header *blockHeader, c
 * MinerWorker
 */
 
-MinerWorker::MinerWorker(Nan::Callback *callback, Device *device, uint32_t threadIndex, nimiq_block_header blockHeader)
-    : AsyncProgressQueueWorker(callback), device(device), threadIndex(threadIndex), blockHeader(blockHeader)
+MinerWorker::MinerWorker(Nan::Callback *callback, Device *device, uint32_t workId, uint32_t threadIndex, nimiq_block_header blockHeader)
+    : AsyncProgressQueueWorker(callback), device(device), workId(workId), threadIndex(threadIndex), blockHeader(blockHeader)
 {
 }
 
@@ -562,7 +570,7 @@ void MinerWorker::Execute(const MinerProgress &progress)
 {
   try
   {
-    device->MineNonces(threadIndex, &blockHeader, progress);
+    device->MineNonces(workId, threadIndex, &blockHeader, progress);
   }
   catch (std::exception &e)
   {
