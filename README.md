@@ -77,6 +77,19 @@ memoryTradeoff  Performs extra computations to reduce memory access
                 Default: 192                                             [array]
 ```
 
+## Recommended Settings
+
+```
+GPU Model          GPU RAM          Memory          Cache          MemoryTradeoff          OS          Hashrate
+
+Nvidia 1060          6GB             2816             2                 224               HiveOS        192KH/S
+
+Nvidia 1060          3GB             1280             2                 384               HiveOS        183KH/S
+
+Nvidia 106-100       6GB             2816             2                 384               HiveOS        160KH/S
+
+```
+
 ### Links
 Website: https://sushipool.com
 
