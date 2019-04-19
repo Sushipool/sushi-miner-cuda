@@ -82,6 +82,8 @@ memoryTradeoff  Performs extra computations to reduce memory access
 ```
 GPU Model          GPU RAM          Memory          Cache          MemoryTradeoff          OS          Hashrate
 
+Nvidia 1080 TI       11GB            5248             2                 256               HiveOS        458KH/S
+
 Nvidia 1060          6GB             2816             2                 224               HiveOS        192KH/S
 
 Nvidia 1060          3GB             1280             2                 384               HiveOS        183KH/S
