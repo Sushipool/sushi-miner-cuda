@@ -1,5 +1,3 @@
-# This repository is no longer in use. Please go to https://github.com/Sushipool/sushi-nimiq-miner for the latest code.
-
 # Nimiq CUDA GPU Mining Client for Nvidia Cards
 [![Github All Releases](https://img.shields.io/github/downloads/Sushipool/sushi-miner-cuda/total.svg)]()
 
