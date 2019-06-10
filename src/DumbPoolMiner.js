@@ -44,7 +44,7 @@ class DumbPoolMiner extends Nimiq.Observable {
 
         this._ws.on('close', (code, reason) => {
             let timeout = Math.floor(Math.random() * 25) + 5;
-            this._host = Utils.getNewHost(this._host);
+            //this._host = Utils.getNewHost(this._host);
             Nimiq.Log.w(DumbPoolMiner, `Connection lost. Reconnecting in ${timeout} seconds to ${this._host}`);
             this._stopMining();
             if (!this._closed) {

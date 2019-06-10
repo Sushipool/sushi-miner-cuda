@@ -2,7 +2,7 @@ const fs = require('fs');
 const JSON5 = require('json5');
 const Nimiq = require('@nimiq/core');
 
-exports.humanHashrate = function (hashes) {
+exports.humanHashrate = function (hashes, decimals = 1) {
     let thresh = 1000;
     if (Math.abs(hashes) < thresh) {
         return hashes + ' H/s';
@@ -13,7 +13,7 @@ exports.humanHashrate = function (hashes) {
         hashes /= thresh;
         ++u;
     } while (Math.abs(hashes) >= thresh && u < units.length - 1);
-    return hashes.toFixed(1) + ' ' + units[u];
+    return hashes.toFixed(decimals) + ' ' + units[u];
 }
 
 exports.readConfigFile = function (fileName) {

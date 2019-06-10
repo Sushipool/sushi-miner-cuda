@@ -248,147 +248,75 @@ __device__ uint32_t compute_ref_index(struct block_th *prev, uint32_t curr_index
     return ref_index;
 }
 
-__device__ void load_block(struct block_th *dst,
-                           const struct block_g *memory,
-                           const struct block_g *cache, uint32_t cacheSize,
-                           uint32_t index, uint32_t thread)
-{
-    if (index < 2 + cacheSize && index >= 2)
-    {
-        load_block(dst, cache + index - 2, thread);
-    }
-    else
-    {
-        load_block(dst, memory + index, thread);
-    }
-}
-
-__device__ void load_block_xor(struct block_th *dst,
-                               const struct block_g *memory,
-                               const struct block_g *cache, uint32_t cacheSize,
-                               uint32_t index, uint32_t thread)
-{
-    if (index < 2 + cacheSize && index >= 2)
-    {
-        load_block_xor(dst, cache + index - 2, thread);
-    }
-    else
-    {
-        load_block_xor(dst, memory + index, thread);
-    }
-}
-
-__device__ void store_block(struct block_g *memory,
-                            struct block_g *cache, uint32_t cacheSize,
-                            const struct block_th *src,
-                            uint32_t index, uint32_t thread)
-{
-    if (index < 2 + cacheSize && index >= 2)
-    {
-        store_block(cache + index - 2, src, thread);
-    }
-    else
-    {
-        store_block(memory + index, src, thread);
-    }
-}
-
-__device__ void get_ref_index(uint32_t *ref_index, bool *is_stored, const uint16_t *ref_indexes, uint32_t index)
-{
-    uint16_t ri = ref_indexes[index];
-    *ref_index = (ri & 0x7FFF);
-    *is_stored = (bool) (ri & 0x8000);
-}
-
-__device__ void set_ref_index(uint16_t *ref_indexes, uint32_t index, uint32_t ref_index, bool is_stored, uint32_t thread)
-{
-    if (thread == 0)
-    {
-        ref_indexes[index] = (is_stored ? 0x8000 : 0) | ref_index;
-    }
-    __syncwarp();
-}
-
-__device__ void compute_block_xor(struct block_th *dst,
-                                const struct block_g *memory,
-                                const struct block_g *cache, uint32_t cacheSize,
-                                uint32_t index, uint32_t ref_index, uint32_t thread)
-{
-    struct block_th prev, tmp;
-
-    load_block(&prev, memory, cache, cacheSize, index - 1, thread);
-    load_block_xor(&prev, memory, cache, cacheSize, ref_index, thread);
-
-    move_block(&tmp, &prev);
-    shuffle_block(&prev, thread);
-    xor_block(&prev, &tmp);
-
-    xor_block(dst, &prev);
-}
-
-__device__ void argon2_step(struct block_g *memory, struct block_g *cache, uint32_t cacheSize,
-                            uint16_t *ref_indexes, uint32_t memoryTradeoff,
-                            uint32_t curr_index, struct block_th *prev, bool *is_prev_stored, uint32_t thread)
-{
-    struct block_th tmp;
-    bool is_ref_stored = true;
-    bool is_curr_stored = true;
-
-    uint32_t ref_index = compute_ref_index(prev, curr_index);
-
-    if (curr_index >= memoryTradeoff)
-    {
-        if (ref_index >= memoryTradeoff && ref_index >= 2)
-        {
-            // what was the ref block of the current ref block?
-            uint32_t ref_ref_index;
-            get_ref_index(&ref_ref_index, &is_ref_stored, ref_indexes, ref_index);
-            if (!is_ref_stored)
-            {
-                compute_block_xor(prev, memory, cache, cacheSize, ref_index, ref_ref_index, thread);
-            }
-        }
-        is_curr_stored = !(*is_prev_stored && is_ref_stored) || (curr_index == MEMORY_COST - 1);
-
-        set_ref_index(ref_indexes, curr_index, ref_index, is_curr_stored, thread);
-    }
-
-    // load if it was not computed before 
-    if (is_ref_stored)
-    {
-        load_block_xor(prev, memory, cache, cacheSize, ref_index, thread);
-    }
-
-    move_block(&tmp, prev);
-    shuffle_block(prev, thread);
-    xor_block(prev, &tmp);
-
-    if (is_curr_stored)
-    {
-        store_block(memory, cache, cacheSize, prev, curr_index, thread);
-    }
-    *is_prev_stored = is_curr_stored;
-}
-
 __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memoryTradeoff)
 {
     extern __shared__ struct block_g cache[];
-    // ref_index of the current block, msb = 1 if current block is stored to global mem
+    // ref_index of the current block, -1 if current block is stored to global mem
     __shared__ uint16_t ref_indexes[MEMORY_COST];
 
     uint32_t job_id = blockIdx.y;
     uint32_t thread = threadIdx.x;
 
-    /* select job's memory region: */
+    // select job's memory region
     memory += (size_t)job_id * MEMORY_COST;
 
-    struct block_th prev;
-    bool is_prev_stored = true;
+    struct block_th prev_prev, ref_prev, prev, tmp;
+    bool is_stored = true;
 
+    load_block(&prev_prev, memory, thread);
     load_block(&prev, memory + 1, thread);
+
+    ((uint64_t*) ref_indexes)[0 * THREADS_PER_LANE + thread] = (uint64_t) -1;
+    ((uint64_t*) ref_indexes)[1 * THREADS_PER_LANE + thread] = (uint64_t) -1;
+    ((uint64_t*) ref_indexes)[2 * THREADS_PER_LANE + thread] = (uint64_t) -1;
+    ((uint64_t*) ref_indexes)[3 * THREADS_PER_LANE + thread] = (uint64_t) -1;
 
     for (uint32_t curr_index = 2; curr_index < MEMORY_COST; curr_index++)
     {
-        argon2_step(memory, cache, cacheSize, ref_indexes, memoryTradeoff, curr_index, &prev, &is_prev_stored, thread);
+        store_block(cache + (curr_index - 2) % cacheSize, &prev_prev, thread);
+        move_block(&prev_prev, &prev);
+
+        uint32_t ref_index = compute_ref_index(&prev, curr_index);
+        uint32_t ref_ref_index = ref_indexes[ref_index];
+
+        if (curr_index - ref_index <= cacheSize + 1)
+        {
+            load_block_xor(&prev, cache + ref_index % cacheSize, thread);
+        }
+        else if (ref_ref_index == (uint16_t) -1)
+        {
+            load_block_xor(&prev, memory + ref_index, thread);
+        }
+        else
+        {
+            load_block(&ref_prev, memory + ref_index - 1, thread);
+            load_block_xor(&ref_prev, memory + ref_ref_index, thread);
+
+            move_block(&tmp, &ref_prev);
+            shuffle_block(&ref_prev, thread);
+            xor_block(&ref_prev, &tmp);
+
+            xor_block(&prev, &ref_prev);
+        }
+
+        move_block(&tmp, &prev);
+        shuffle_block(&prev, thread);
+        xor_block(&prev, &tmp);
+
+        is_stored = !(is_stored && (curr_index >= memoryTradeoff) && (ref_ref_index == (uint16_t) -1));
+        if (!is_stored)
+        {
+            if (thread == 0)
+            {
+                ref_indexes[curr_index] = ref_index;
+            }
+            __syncwarp();
+        }
+        else if (curr_index < MEMORY_COST - cacheSize - 1)
+        {
+            store_block(memory + curr_index, &prev, thread);
+        }
     }
+
+    store_block(memory + MEMORY_COST - 1, &prev, thread);
 }

@@ -417,12 +417,12 @@ NAN_SETTER(Device::HandleSetters)
   {
     if (!value->IsUint32())
     {
-      return Nan::ThrowError(Nan::New("Memory tradeoff must be between 0 and 512.").ToLocalChecked());
+      return Nan::ThrowError(Nan::New("Memory tradeoff must be between 2 and 512.").ToLocalChecked());
     }
     uint32_t memoryTradeoff = Nan::To<uint32_t>(value).FromJust();
-    if (memoryTradeoff > MEMORY_COST)
+    if (memoryTradeoff < 2 || memoryTradeoff > MEMORY_COST)
     {
-      return Nan::ThrowError(Nan::New("Memory tradeoff must be between 0 and 512.").ToLocalChecked());
+      return Nan::ThrowError(Nan::New("Memory tradeoff must be between 2 and 512.").ToLocalChecked());
     }
     device->memoryTradeoff = memoryTradeoff;
   }
