@@ -124,11 +124,30 @@ __device__ uint64_t rotr64(uint64_t x, uint32_t n)
     return (x >> n) | (x << (64 - n));
 }
 
-__device__ uint64_t f(uint64_t x, uint64_t y)
+__device__ uint64_t permute64(uint64_t x, uint32_t hi, uint32_t lo)
 {
     uint32_t xlo = u64_lo(x);
-    uint32_t ylo = u64_lo(y);
-    return x + y + 2 * u64_build(__umulhi(xlo, ylo), xlo * ylo);
+    uint32_t xhi = u64_hi(x);
+    return u64_build(__byte_perm(xlo, xhi, hi), __byte_perm(xlo, xhi, lo));
+}
+
+__device__ uint64_t f(uint64_t x, uint64_t y)
+{
+    uint64_t r;
+    asm("{"
+        ".reg .u32 xlo, ylo, mlo, mhi;"
+        "cvt.u32.u64 xlo, %1;"        // xlo = u64_lo(x)
+        "cvt.u32.u64 ylo, %2;"        // ylo = u64_lo(y)
+        "mul.lo.u32 mlo, xlo, ylo;"   // mlo = xlo * ylo
+        "mul.hi.u32 mhi, xlo, ylo;"   // mhi __umulhi(xlo, ylo)
+        "mov.b64 %0, {mlo, mhi};"     // r = u64_build(mhi, mlo)
+        "shl.b64 %0, %0, 1;"          // r *= 2
+        "add.u64 %0, %0, %1;"         // r += x
+        "add.u64 %0, %0, %2;"         // r += y
+        "}"
+        : "=l"(r) : "l"(x), "l"(y)
+    );
+    return r;
 }
 
 __device__ void g(struct block_th *block)
@@ -142,9 +161,9 @@ __device__ void g(struct block_th *block)
     a = f(a, b);
     d = rotr64(d ^ a, 32);
     c = f(c, d);
-    b = rotr64(b ^ c, 24);
+    b = permute64(b ^ c, 0x2107, 0x6543);
     a = f(a, b);
-    d = rotr64(d ^ a, 16);
+    d = permute64(d ^ a, 0x1076, 0x5432);
     c = f(c, d);
     b = rotr64(b ^ c, 63);
 
