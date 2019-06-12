@@ -162,22 +162,22 @@ __device__ void transpose(struct block_th *block, uint32_t thread)
 
 __device__ void shift1_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t src_thr_b = (thread & 0x1c) | ((thread + 1) & 0x3);
-    uint32_t src_thr_d = (thread & 0x1c) | ((thread + 3) & 0x3);
+    uint32_t src_thr_b = (thread + 1) & 0x3;
+    uint32_t src_thr_d = (thread + 3) & 0x3;
 
-    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b, 0x4);
     block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
-    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d, 0x4);
 }
 
 __device__ void unshift1_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t src_thr_b = (thread & 0x1c) | ((thread + 3) & 0x3);
-    uint32_t src_thr_d = (thread & 0x1c) | ((thread + 1) & 0x3);
+    uint32_t src_thr_b = (thread + 3) & 0x3;
+    uint32_t src_thr_d = (thread + 1) & 0x3;
 
-    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b, 0x4);
     block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
-    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d, 0x4);
 }
 
 __device__ void shift2_shuffle(struct block_th *block, uint32_t thread)
