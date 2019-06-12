@@ -44,43 +44,10 @@ __device__ uint32_t u64_hi(uint64_t x)
     return (uint32_t)(x >> 32);
 }
 
-__device__ uint64_t u64_shuffle(uint64_t v, uint32_t thread)
-{
-    uint32_t lo = u64_lo(v);
-    uint32_t hi = u64_hi(v);
-    lo = __shfl_sync(0xFFFFFFFF, lo, thread);
-    hi = __shfl_sync(0xFFFFFFFF, hi, thread);
-    return u64_build(hi, lo);
-}
-
 struct block_th
 {
     uint64_t a, b, c, d;
 };
-
-__device__ uint64_t cmpeq_mask(uint32_t test, uint32_t ref)
-{
-    uint32_t x = -(uint32_t)(test == ref);
-    return u64_build(x, x);
-}
-
-__device__ uint64_t block_th_get(const struct block_th *b, uint32_t idx)
-{
-    uint64_t res = 0;
-    res ^= cmpeq_mask(idx, 0) & b->a;
-    res ^= cmpeq_mask(idx, 1) & b->b;
-    res ^= cmpeq_mask(idx, 2) & b->c;
-    res ^= cmpeq_mask(idx, 3) & b->d;
-    return res;
-}
-
-__device__ void block_th_set(struct block_th *b, uint32_t idx, uint64_t v)
-{
-    b->a ^= cmpeq_mask(idx, 0) & (v ^ b->a);
-    b->b ^= cmpeq_mask(idx, 1) & (v ^ b->b);
-    b->c ^= cmpeq_mask(idx, 2) & (v ^ b->c);
-    b->d ^= cmpeq_mask(idx, 3) & (v ^ b->d);
-}
 
 __device__ void move_block(struct block_th *dst, const struct block_th *src)
 {
@@ -173,66 +140,67 @@ __device__ void g(struct block_th *block)
     block->d = d;
 }
 
-template<class shuffle>
-__device__ void apply_shuffle(struct block_th *block, uint32_t thread)
-{
-    for (uint32_t i = 0; i < QWORDS_PER_THREAD; i++) {
-        uint32_t src_thr = shuffle::apply(thread, i);
-
-        uint64_t v = block_th_get(block, i);
-        v = u64_shuffle(v, src_thr);
-        block_th_set(block, i, v);
-    }
-}
-
 __device__ void transpose(struct block_th *block, uint32_t thread)
 {
-    uint32_t thread_group = (thread & 0x0C) >> 2;
-    for (uint32_t i = 1; i < QWORDS_PER_THREAD; i++) {
-        uint32_t thr = (i << 2) ^ thread;
-        uint32_t idx = thread_group ^ i;
+    // thread groups, previously: thread_group = (thread & 0x0C) >> 2
+    uint32_t g1 = (thread & 0x4);
+    uint32_t g2 = (thread & 0x8);
 
-        uint64_t v = block_th_get(block, idx);
-        v = u64_shuffle(v, thr);
-        block_th_set(block, idx, v);
-    }
+    uint64_t x1 = (g2 ? (g1 ? block->c : block->d) : (g1 ? block->a : block->b));
+    uint64_t x2 = (g2 ? (g1 ? block->b : block->a) : (g1 ? block->d : block->c));
+    uint64_t x3 = (g2 ? (g1 ? block->a : block->b) : (g1 ? block->c : block->d));
+
+    x1 = __shfl_xor_sync(0xFFFFFFFF, x1, 0x4);
+    x2 = __shfl_xor_sync(0xFFFFFFFF, x2, 0x8);
+    x3 = __shfl_xor_sync(0xFFFFFFFF, x3, 0xC);
+
+    block->a = (g2 ? (g1 ? x3 : x2) : (g1 ? x1 : block->a));
+    block->b = (g2 ? (g1 ? x2 : x3) : (g1 ? block->b : x1));
+    block->c = (g2 ? (g1 ? x1 : block->c) : (g1 ? x3 : x2));
+    block->d = (g2 ? (g1 ? block->d : x1) : (g1 ? x2 : x3));
 }
 
-struct shift1_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        return (thread & 0x1c) | ((thread + idx) & 0x3);
-    }
-};
+__device__ void shift1_shuffle(struct block_th *block, uint32_t thread)
+{
+    uint32_t src_thr_b = (thread & 0x1c) | ((thread + 1) & 0x3);
+    uint32_t src_thr_d = (thread & 0x1c) | ((thread + 3) & 0x3);
 
-struct unshift1_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+}
 
-        return (thread & 0x1c) | ((thread + idx) & 0x3);
-    }
-};
+__device__ void unshift1_shuffle(struct block_th *block, uint32_t thread)
+{
+    uint32_t src_thr_b = (thread & 0x1c) | ((thread + 3) & 0x3);
+    uint32_t src_thr_d = (thread & 0x1c) | ((thread + 1) & 0x3);
 
-struct shift2_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
-        lo = (lo + idx) & 0x3;
-        return ((lo & 0x2) << 3) | (thread & 0xe) | (lo & 0x1);
-    }
-};
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+}
 
-struct unshift2_shuffle {
-    __device__ static uint32_t apply(uint32_t thread, uint32_t idx)
-    {
-        idx = (QWORDS_PER_THREAD - idx) % QWORDS_PER_THREAD;
+__device__ void shift2_shuffle(struct block_th *block, uint32_t thread)
+{
+    uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
+    uint32_t src_thr_b = (((lo + 1) & 0x2) << 3) | (thread & 0xe) | ((lo + 1) & 0x1);
+    uint32_t src_thr_d = (((lo + 3) & 0x2) << 3) | (thread & 0xe) | ((lo + 3) & 0x1);
 
-        uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
-        lo = (lo + idx) & 0x3;
-        return ((lo & 0x2) << 3) | (thread & 0xe) | (lo & 0x1);
-    }
-};
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x10);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+}
+
+__device__ void unshift2_shuffle(struct block_th *block, uint32_t thread)
+{
+    uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
+    uint32_t src_thr_b = (((lo + 3) & 0x2) << 3) | (thread & 0xe) | ((lo + 3) & 0x1);
+    uint32_t src_thr_d = (((lo + 1) & 0x2) << 3) | (thread & 0xe) | ((lo + 1) & 0x1);
+
+    block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x10);
+    block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
+}
 
 __device__ void shuffle_block(struct block_th *block, uint32_t thread)
 {
@@ -240,25 +208,25 @@ __device__ void shuffle_block(struct block_th *block, uint32_t thread)
 
     g(block);
 
-    apply_shuffle<shift1_shuffle>(block, thread);
+    shift1_shuffle(block, thread);
 
     g(block);
 
-    apply_shuffle<unshift1_shuffle>(block, thread);
+    unshift1_shuffle(block, thread);
     transpose(block, thread);
 
     g(block);
 
-    apply_shuffle<shift2_shuffle>(block, thread);
+    shift2_shuffle(block, thread);
 
     g(block);
 
-    apply_shuffle<unshift2_shuffle>(block, thread);
+    unshift2_shuffle(block, thread);
 }
 
 __device__ uint32_t compute_ref_index(struct block_th *prev, uint32_t curr_index)
 {
-    uint64_t v = u64_shuffle(prev->a, 0);
+    uint64_t v = __shfl_sync(0xFFFFFFFF, prev->a, 0);
     uint32_t ref_index = u64_lo(v);
 
     uint32_t ref_area_size = curr_index - 1;
