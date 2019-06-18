@@ -70,6 +70,12 @@ __device__ void load_block(struct block_th *dst, const struct block_g *src, uint
     dst->d = src->data[3 * THREADS_PER_LANE + thread];
 }
 
+__device__ void load_block_128(struct block_th *dst, const struct block_g *src, uint32_t thread)
+{
+    *((ulong2*) &dst->a) = ((ulong2*) &src->data)[0 * THREADS_PER_LANE + thread];
+    *((ulong2*) &dst->c) = ((ulong2*) &src->data)[1 * THREADS_PER_LANE + thread];
+}
+
 __device__ void load_block_xor(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     dst->a ^= src->data[0 * THREADS_PER_LANE + thread];
@@ -78,12 +84,29 @@ __device__ void load_block_xor(struct block_th *dst, const struct block_g *src, 
     dst->d ^= src->data[3 * THREADS_PER_LANE + thread];
 }
 
+__device__ void load_block_xor_128(struct block_th *dst, const struct block_g *src, uint32_t thread)
+{
+    ulong2 tmp;
+    tmp = ((ulong2*) &src->data)[0 * THREADS_PER_LANE + thread];
+    dst->a ^= tmp.x;
+    dst->b ^= tmp.y;
+    tmp = ((ulong2*) &src->data)[1 * THREADS_PER_LANE + thread];
+    dst->c ^= tmp.x;
+    dst->d ^= tmp.y;
+}
+
 __device__ void store_block(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
     dst->data[0 * THREADS_PER_LANE + thread] = src->a;
     dst->data[1 * THREADS_PER_LANE + thread] = src->b;
     dst->data[2 * THREADS_PER_LANE + thread] = src->c;
     dst->data[3 * THREADS_PER_LANE + thread] = src->d;
+}
+
+__device__ void store_block_128(struct block_g *dst, const struct block_th *src, uint32_t thread)
+{
+    ((ulong2*) &dst->data)[0 * THREADS_PER_LANE + thread] = *((ulong2*) &src->a);
+    ((ulong2*) &dst->data)[1 * THREADS_PER_LANE + thread] = *((ulong2*) &src->c);
 }
 
 __device__ uint64_t rotr64(uint64_t x, uint32_t n)
@@ -140,71 +163,121 @@ __device__ void g(struct block_th *block)
     block->d = d;
 }
 
-__device__ void transpose(struct block_th *block, uint32_t thread)
+__device__ void transpose1(struct block_th *block, uint32_t thread)
 {
-    // thread groups, previously: thread_group = (thread & 0x0C) >> 2
-    uint32_t g1 = (thread & 0x4);
-    uint32_t g2 = (thread & 0x8);
+    uint32_t src_thr = (thread ^ 0x2);
+    uint32_t g2 = (thread & 0x2);
+    uint32_t g4 = (thread & 0x4);
 
-    uint64_t x1 = (g2 ? (g1 ? block->c : block->d) : (g1 ? block->a : block->b));
-    uint64_t x2 = (g2 ? (g1 ? block->b : block->a) : (g1 ? block->d : block->c));
-    uint64_t x3 = (g2 ? (g1 ? block->a : block->b) : (g1 ? block->c : block->d));
+    uint64_t xab = __shfl_sync(0xFFFFFFFF, g2 ? block->a : block->b, src_thr);
+    uint64_t xcd = __shfl_sync(0xFFFFFFFF, g2 ? block->c : block->d, src_thr);
 
-    x1 = __shfl_xor_sync(0xFFFFFFFF, x1, 0x4);
-    x2 = __shfl_xor_sync(0xFFFFFFFF, x2, 0x8);
-    x3 = __shfl_xor_sync(0xFFFFFFFF, x3, 0xC);
+    uint64_t xa = g2 ? xab : block->a;
+    uint64_t xc = g2 ? xcd : block->c;
+    uint64_t xac = __shfl_xor_sync(0xFFFFFFFF, g4 ? xa : xc, 0x4);
 
-    block->a = (g2 ? (g1 ? x3 : x2) : (g1 ? x1 : block->a));
-    block->b = (g2 ? (g1 ? x2 : x3) : (g1 ? block->b : x1));
-    block->c = (g2 ? (g1 ? x1 : block->c) : (g1 ? x3 : x2));
-    block->d = (g2 ? (g1 ? block->d : x1) : (g1 ? x2 : x3));
+    uint64_t xb = g2 ? block->b : xab;
+    uint64_t xd = g2 ? block->d : xcd;
+    uint64_t xbd = __shfl_xor_sync(0xFFFFFFFF, g4 ? xb : xd, 0x4);
+
+    block->a = g4 ? xac : xa;
+    block->b = g4 ? xbd : xb;
+    block->c = g4 ? xc : xac;
+    block->d = g4 ? xd : xbd;
+}
+
+__device__ void transpose2(struct block_th *block, uint32_t thread)
+{
+    uint32_t src_thr = (thread ^ 0x10);
+    uint32_t g4 = (thread & 0x4);
+    uint32_t g16 = (thread & 0x10);
+
+    uint64_t xac = __shfl_xor_sync(0xFFFFFFFF, g4 ? block->a : block->c, 0x4);
+    uint64_t xbd = __shfl_xor_sync(0xFFFFFFFF, g4 ? block->b : block->d, 0x4);
+
+    uint64_t xa = g4 ? xac : block->a;
+    uint64_t xb = g4 ? xbd : block->b;
+    uint64_t xab = __shfl_sync(0xFFFFFFFF, g16 ? xa : xb, src_thr);
+
+    uint64_t xc = g4 ? block->c : xac;
+    uint64_t xd = g4 ? block->d : xbd;
+    uint64_t xcd = __shfl_sync(0xFFFFFFFF, g16 ? xc : xd, src_thr);
+
+    block->a = g16 ? xab : xa;
+    block->b = g16 ? xb : xab;
+    block->c = g16 ? xcd : xc;
+    block->d = g16 ? xd : xcd;
+}
+
+__device__ void transpose3(struct block_th *block, uint32_t thread)
+{
+    uint32_t src_thr1 = (thread ^ 0x10);
+    uint32_t src_thr2 = (thread ^ 0x2);
+    uint32_t g2 = (thread & 0x2);
+    uint32_t g16 = (thread & 0x10);
+
+    uint64_t xab = __shfl_sync(0xFFFFFFFF, g16 ? block->a : block->b, src_thr1);
+    uint64_t xcd = __shfl_sync(0xFFFFFFFF, g16 ? block->c : block->d, src_thr1);
+
+    uint64_t xa = g16 ? xab : block->a;
+    uint64_t xb = g16 ? block->b : xab;
+    uint64_t xc = g16 ? xcd : block->c;
+    uint64_t xd = g16 ? block->d : xcd;
+
+    xab = __shfl_sync(0xFFFFFFFF, g2 ? xa : xb, src_thr2);
+    xcd = __shfl_sync(0xFFFFFFFF, g2 ? xc : xd, src_thr2);
+
+    block->a = g2 ? xab : xa;
+    block->b = g2 ? xb : xab;
+    block->c = g2 ? xcd : xc;
+    block->d = g2 ? xd : xcd;
 }
 
 __device__ void shift1_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t src_thr_b = (thread + 1) & 0x3;
-    uint32_t src_thr_d = (thread + 3) & 0x3;
+    uint32_t mask = (thread & 0x2) >> 1;
+    uint32_t src_thr_b = thread ^ mask ^ 0x2;
+    uint32_t src_thr_d = thread ^ mask ^ 0x3;
 
     block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b, 0x4);
-    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x1, 0x4);
     block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d, 0x4);
 }
 
 __device__ void unshift1_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t src_thr_b = (thread + 3) & 0x3;
-    uint32_t src_thr_d = (thread + 1) & 0x3;
+    uint32_t mask = (thread & 0x2) >> 1;
+    uint32_t src_thr_b = thread ^ mask ^ 0x3;
+    uint32_t src_thr_d = thread ^ mask ^ 0x2;
 
     block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b, 0x4);
-    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x2);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x1, 0x4);
     block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d, 0x4);
 }
 
 __device__ void shift2_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
-    uint32_t src_thr_b = (((lo + 1) & 0x2) << 3) | (thread & 0xe) | ((lo + 1) & 0x1);
-    uint32_t src_thr_d = (((lo + 3) & 0x2) << 3) | (thread & 0xe) | ((lo + 3) & 0x1);
+    uint32_t src_thr_b = thread ^ (((thread & 0x2) << 2) | 0x2);
+    uint32_t src_thr_d = thread ^ (((~thread & 0x2) << 2) | 0x2);
 
     block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
-    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x10);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x8);
     block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
 }
 
 __device__ void unshift2_shuffle(struct block_th *block, uint32_t thread)
 {
-    uint32_t lo = (thread & 0x1) | ((thread & 0x10) >> 3);
-    uint32_t src_thr_b = (((lo + 3) & 0x2) << 3) | (thread & 0xe) | ((lo + 3) & 0x1);
-    uint32_t src_thr_d = (((lo + 1) & 0x2) << 3) | (thread & 0xe) | ((lo + 1) & 0x1);
+    uint32_t src_thr_b = thread ^ (((~thread & 0x2) << 2) | 0x2);
+    uint32_t src_thr_d = thread ^ (((thread & 0x2) << 2) | 0x2);
 
     block->b = __shfl_sync(0xFFFFFFFF, block->b, src_thr_b);
-    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x10);
+    block->c = __shfl_xor_sync(0xFFFFFFFF, block->c, 0x8);
     block->d = __shfl_sync(0xFFFFFFFF, block->d, src_thr_d);
 }
 
 __device__ void shuffle_block(struct block_th *block, uint32_t thread)
 {
-    transpose(block, thread);
+    transpose1(block, thread);
 
     g(block);
 
@@ -213,7 +286,7 @@ __device__ void shuffle_block(struct block_th *block, uint32_t thread)
     g(block);
 
     unshift1_shuffle(block, thread);
-    transpose(block, thread);
+    transpose2(block, thread);
 
     g(block);
 
@@ -222,6 +295,7 @@ __device__ void shuffle_block(struct block_th *block, uint32_t thread)
     g(block);
 
     unshift2_shuffle(block, thread);
+    transpose3(block, thread);
 }
 
 __device__ uint32_t compute_ref_index(struct block_th *prev, uint32_t curr_index)
@@ -235,7 +309,7 @@ __device__ uint32_t compute_ref_index(struct block_th *prev, uint32_t curr_index
     return ref_index;
 }
 
-__global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memoryTradeoff)
+__global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t memory_tradeoff)
 {
     extern __shared__ struct block_g cache[];
     // ref_index of the current block, -1 if current block is stored to global mem
@@ -250,8 +324,8 @@ __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memo
     struct block_th prev_prev, ref_prev, prev, tmp;
     bool is_stored = true;
 
-    load_block(&prev_prev, memory, thread);
-    load_block(&prev, memory + 1, thread);
+    load_block_128(&prev_prev, memory, thread);
+    load_block_128(&prev, memory + 1, thread);
 
     ((uint64_t*) ref_indexes)[0 * THREADS_PER_LANE + thread] = (uint64_t) -1;
     ((uint64_t*) ref_indexes)[1 * THREADS_PER_LANE + thread] = (uint64_t) -1;
@@ -260,24 +334,24 @@ __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memo
 
     for (uint32_t curr_index = 2; curr_index < MEMORY_COST; curr_index++)
     {
-        store_block(cache + (curr_index - 2) % cacheSize, &prev_prev, thread);
+        store_block(cache + (curr_index - 2) % cache_size, &prev_prev, thread);
         move_block(&prev_prev, &prev);
 
         uint32_t ref_index = compute_ref_index(&prev, curr_index);
         uint32_t ref_ref_index = ref_indexes[ref_index];
 
-        if (curr_index - ref_index <= cacheSize + 1)
+        if (curr_index - ref_index <= cache_size + 1)
         {
-            load_block_xor(&prev, cache + ref_index % cacheSize, thread);
+            load_block_xor(&prev, cache + ref_index % cache_size, thread);
         }
         else if (ref_ref_index == (uint16_t) -1)
         {
-            load_block_xor(&prev, memory + ref_index, thread);
+            load_block_xor_128(&prev, memory + ref_index, thread);
         }
         else
         {
-            load_block(&ref_prev, memory + ref_index - 1, thread);
-            load_block_xor(&ref_prev, memory + ref_ref_index, thread);
+            load_block_128(&ref_prev, memory + ref_index - 1, thread);
+            load_block_xor_128(&ref_prev, memory + ref_ref_index, thread);
 
             move_block(&tmp, &ref_prev);
             shuffle_block(&ref_prev, thread);
@@ -290,7 +364,7 @@ __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memo
         shuffle_block(&prev, thread);
         xor_block(&prev, &tmp);
 
-        is_stored = !(is_stored && (curr_index >= memoryTradeoff) && (ref_ref_index == (uint16_t) -1));
+        is_stored = !(is_stored && (curr_index >= memory_tradeoff) && (ref_ref_index == (uint16_t) -1));
         if (!is_stored)
         {
             if (thread == 0)
@@ -299,11 +373,11 @@ __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memo
             }
             __syncwarp();
         }
-        else if (curr_index < MEMORY_COST - cacheSize - 1)
+        else if (curr_index < MEMORY_COST - cache_size - 1)
         {
-            store_block(memory + curr_index, &prev, thread);
+            store_block_128(memory + curr_index, &prev, thread);
         }
     }
 
-    store_block(memory + MEMORY_COST - 1, &prev, thread);
+    store_block_128(memory + MEMORY_COST - 1, &prev, thread);
 }
