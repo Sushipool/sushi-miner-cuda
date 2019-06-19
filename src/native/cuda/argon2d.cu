@@ -24,25 +24,10 @@ SOFTWARE.
 
 /*
 * Argon2d
-* Simplified version of https://gitlab.com/omos/argon2-gpu
+* Simplified and refactored version of https://gitlab.com/omos/argon2-gpu
 */
 
 #include "kernels.h"
-
-__device__ uint64_t u64_build(uint32_t hi, uint32_t lo)
-{
-    return ((uint64_t)hi << 32) | (uint64_t)lo;
-}
-
-__device__ uint32_t u64_lo(uint64_t x)
-{
-    return (uint32_t)x;
-}
-
-__device__ uint32_t u64_hi(uint64_t x)
-{
-    return (uint32_t)(x >> 32);
-}
 
 struct block_th
 {
@@ -110,58 +95,68 @@ __device__ void store_block_global(struct block_g *dst, const struct block_th *s
     ((ulong2*) &dst->data)[1 * THREADS_PER_LANE + thread] = *((ulong2*) &src->c);
 }
 
-__device__ uint64_t rotr64(uint64_t x, uint32_t n)
-{
-    return (x >> n) | (x << (64 - n));
-}
-
-__device__ uint64_t permute64(uint64_t x, uint32_t hi, uint32_t lo)
-{
-    uint32_t xlo = u64_lo(x);
-    uint32_t xhi = u64_hi(x);
-    return u64_build(__byte_perm(xlo, xhi, hi), __byte_perm(xlo, xhi, lo));
-}
-
-__device__ uint64_t f(uint64_t x, uint64_t y)
-{
-    uint64_t r;
-    asm("{"
-        ".reg .u32 xlo, ylo, mlo, mhi;"
-        "cvt.u32.u64 xlo, %1;"        // xlo = u64_lo(x)
-        "cvt.u32.u64 ylo, %2;"        // ylo = u64_lo(y)
-        "mul.lo.u32 mlo, xlo, ylo;"   // mlo = xlo * ylo
-        "mul.hi.u32 mhi, xlo, ylo;"   // mhi __umulhi(xlo, ylo)
-        "mov.b64 %0, {mlo, mhi};"     // r = u64_build(mhi, mlo)
-        "shl.b64 %0, %0, 1;"          // r *= 2
-        "add.u64 %0, %0, %1;"         // r += x
-        "add.u64 %0, %0, %2;"         // r += y
-        "}"
-        : "=l"(r) : "l"(x), "l"(y)
-    );
-    return r;
-}
-
 __device__ void g(struct block_th *block)
 {
-    uint64_t a, b, c, d;
-    a = block->a;
-    b = block->b;
-    c = block->c;
-    d = block->d;
-
-    a = f(a, b);
-    d = rotr64(d ^ a, 32);
-    c = f(c, d);
-    b = permute64(b ^ c, 0x2107, 0x6543);
-    a = f(a, b);
-    d = permute64(d ^ a, 0x1076, 0x5432);
-    c = f(c, d);
-    b = rotr64(b ^ c, 63);
-
-    block->a = a;
-    block->b = b;
-    block->c = c;
-    block->d = d;
+    asm("{"
+        ".reg .u64 s, x;"
+        ".reg .u32 l1, l2, h1, h2;"
+        // a = f(a, b);
+        "add.u64 s, %0, %1;"            // s = a + b
+        "cvt.u32.u64 l1, %0;"           // xlo = u64_lo(a)
+        "cvt.u32.u64 l2, %1;"           // ylo = u64_lo(b)
+        "mul.hi.u32 h1, l1, l2;"        // umulhi(xlo, ylo)
+        "mul.lo.u32 l1, l1, l2;"        // xlo * ylo
+        "mov.b64 x, {l1, h1};"          // x = u64_build(umulhi(xlo, ylo), xlo * ylo)
+        "shl.b64 x, x, 1;"              // x = 2 * x
+        "add.u64 %0, s, x;"             // a = s + x
+        // d = rotr64(d ^ a, 32);
+        "xor.b64 x, %3, %0;"
+        "mov.b64 {h2, l2}, x;"
+        "mov.b64 %3, {l2, h2};"         // swap hi and lo = rotr64(x, 32)
+        // c = f(c, d);
+        "add.u64 s, %2, %3;"
+        "cvt.u32.u64 l1, %2;"
+        "mul.hi.u32 h1, l1, l2;"
+        "mul.lo.u32 l1, l1, l2;"
+        "mov.b64 x, {l1, h1};"
+        "shl.b64 x, x, 1;"
+        "add.u64 %2, s, x;"
+        // b = rotr64(b ^ c, 24);
+        "xor.b64 x, %1, %2;"
+        "mov.b64 {l1, h1}, x;"
+        "prmt.b32 l2, l1, h1, 0x6543;"  // permute bytes 76543210 => 21076543
+        "prmt.b32 h2, l1, h1, 0x2107;"  // rotr64(x, 24)
+        "mov.b64 %1, {l2, h2};"
+        // a = f(a, b);
+        "add.u64 s, %0, %1;"
+        "cvt.u32.u64 l1, %0;"
+        "mul.hi.u32 h1, l1, l2;"
+        "mul.lo.u32 l1, l1, l2;"
+        "mov.b64 x, {l1, h1};"
+        "shl.b64 x, x, 1;"
+        "add.u64 %0, s, x;"
+        // d = rotr64(d ^ a, 16);
+        "xor.b64 x, %3, %0;"
+        "mov.b64 {l1, h1}, x;"
+        "prmt.b32 l2, l1, h1, 0x5432;"  // permute bytes 76543210 => 10765432
+        "prmt.b32 h2, l1, h1, 0x1076;"  // rotr64(x, 16)
+        "mov.b64 %3, {l2, h2};"
+        // c = f(c, d);
+        "add.u64 s, %2, %3;"
+        "cvt.u32.u64 l1, %2;"
+        "mul.hi.u32 h1, l1, l2;"
+        "mul.lo.u32 l1, l1, l2;"
+        "mov.b64 x, {l1, h1};"
+        "shl.b64 x, x, 1;"
+        "add.u64 %2, s, x;"
+        // b = rotr64(b ^ c, 63);
+        "xor.b64 x, %1, %2;"
+        "shl.b64 s, x, 1;"              // x << 1
+        "shr.b64 x, x, 63;"             // x >> 63
+        "add.u64 %1, s, x;"             // emits less instructions than "or"
+        "}"
+        : "+l"(block->a), "+l"(block->b), "+l"(block->c), "+l"(block->d)
+    );
 }
 
 __device__ void transpose1(struct block_th *block, uint32_t thread)
