@@ -323,7 +323,7 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
 
     // cache first block
     store_block_cache(&cache[0], &tmp, thread);
-    uint32_t cache_pos = 1;
+    uint32_t curr_cache_pos = 1;
 
     ((uint64_t*) ref_indexes)[0 * THREADS_PER_LANE + thread] = (uint64_t) -1;
     ((uint64_t*) ref_indexes)[1 * THREADS_PER_LANE + thread] = (uint64_t) -1;
@@ -337,9 +337,12 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
         uint32_t ref_index = compute_ref_index(&prev, curr_index);
         uint32_t ref_ref_index = ref_indexes[ref_index];
 
-        if (curr_index - ref_index <= cache_size + 1)
+        uint32_t ref_offset = curr_index - ref_index;
+        if (ref_offset <= cache_size + 1)
         {
-            load_block_xor_cache(&prev, &cache[ref_index % cache_size], thread);
+            uint32_t ref_cache_pos = curr_cache_pos + (cache_size + 1 - ref_offset);
+            ref_cache_pos = (ref_cache_pos >= cache_size) ? ref_cache_pos - cache_size : ref_cache_pos;
+            load_block_xor_cache(&prev, &cache[ref_cache_pos], thread);
         }
         else if (ref_ref_index == (uint16_t) -1)
         {
@@ -364,12 +367,12 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
         if (curr_index > 2 + cache_size
             && ref_indexes[curr_index - cache_size - 1] == (uint16_t) -1)
         {
-            load_block_cache(&tmp, &cache[cache_pos], thread);
+            load_block_cache(&tmp, &cache[curr_cache_pos], thread);
             store_block_global(memory + curr_index - cache_size - 1, &tmp, thread);
         }
 
-        store_block_cache(&cache[cache_pos++], &prev_prev, thread);
-        cache_pos = (cache_pos == cache_size) ? 0 : cache_pos;
+        store_block_cache(&cache[curr_cache_pos++], &prev_prev, thread);
+        curr_cache_pos = (curr_cache_pos == cache_size) ? 0 : curr_cache_pos;
 
         is_stored = !(is_stored && (curr_index >= memory_tradeoff) && (ref_ref_index == (uint16_t) -1));
         if (!is_stored)
