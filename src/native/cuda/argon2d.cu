@@ -57,9 +57,9 @@ __device__ void load_block_cache(struct block_th *dst, const struct block_g *src
 
 __device__ void load_block_global(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
-    ulong2 *u128 = (ulong2*) src->data;
-    *((ulong2*) &dst->a) = u128[0 * THREADS_PER_LANE + thread];
-    *((ulong2*) &dst->c) = u128[1 * THREADS_PER_LANE + thread];
+    ulonglong2 *u128 = (ulonglong2*) src->data;
+    *((ulonglong2*) &dst->a) = u128[0 * THREADS_PER_LANE + thread];
+    *((ulonglong2*) &dst->c) = u128[1 * THREADS_PER_LANE + thread];
 }
 
 __device__ void load_block_xor_cache(struct block_th *dst, const struct block_g *src, uint32_t thread)
@@ -72,11 +72,11 @@ __device__ void load_block_xor_cache(struct block_th *dst, const struct block_g 
 
 __device__ void load_block_xor_global(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
-    ulong2 *u128 = (ulong2*) src->data;
-    ulong2 ab = u128[0 * THREADS_PER_LANE + thread];
+    ulonglong2 *u128 = (ulonglong2*) src->data;
+    ulonglong2 ab = u128[0 * THREADS_PER_LANE + thread];
     dst->a ^= ab.x;
     dst->b ^= ab.y;
-    ulong2 cd = u128[1 * THREADS_PER_LANE + thread];
+    ulonglong2 cd = u128[1 * THREADS_PER_LANE + thread];
     dst->c ^= cd.x;
     dst->d ^= cd.y;
 }
@@ -91,8 +91,8 @@ __device__ void store_block_cache(struct block_g *dst, const struct block_th *sr
 
 __device__ void store_block_global(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
-    ((ulong2*) &dst->data)[0 * THREADS_PER_LANE + thread] = *((ulong2*) &src->a);
-    ((ulong2*) &dst->data)[1 * THREADS_PER_LANE + thread] = *((ulong2*) &src->c);
+    ((ulonglong2*) &dst->data)[0 * THREADS_PER_LANE + thread] = *((ulonglong2*) &src->a);
+    ((ulonglong2*) &dst->data)[1 * THREADS_PER_LANE + thread] = *((ulonglong2*) &src->c);
 }
 
 __device__ void g(struct block_th *block)
