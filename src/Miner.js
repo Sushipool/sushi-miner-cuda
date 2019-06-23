@@ -46,11 +46,15 @@ class Miner extends Nimiq.Observable {
             this._lastHashRates[idx].push(hashRate);
             if (this._lastHashRates[idx].length > HASHRATE_MOVING_AVERAGE) {
                 this._lastHashRates[idx].shift();
+                averageHashRates[idx] = this._lastHashRates[idx].reduce((sum, val) => sum + val, 0) / this._lastHashRates[idx].length;
+            } else if (this._lastHashRates[idx].length > 1) {
+                averageHashRates[idx] = this._lastHashRates[idx].slice(1).reduce((sum, val) => sum + val, 0) / (this._lastHashRates[idx].length - 1);
             }
-            averageHashRates[idx] = this._lastHashRates[idx].reduce((sum, val) => sum + val, 0) / this._lastHashRates[idx].length;
         });
         this._hashes = [];
-        this.fire('hashrate-changed', averageHashRates);
+        if (averageHashRates.length > 0) {
+            this.fire('hashrate-changed', averageHashRates);
+        }
     }
 
     setShareCompact(shareCompact) {
