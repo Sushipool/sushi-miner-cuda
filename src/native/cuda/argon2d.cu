@@ -371,14 +371,16 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
             store_block_global(memory + curr_index - cache_size - 1, &tmp, thread);
         }
 
-        store_block_cache(&cache[curr_cache_pos++], &prev_prev, thread);
-        curr_cache_pos = (curr_cache_pos == cache_size) ? 0 : curr_cache_pos;
+        store_block_cache(&cache[curr_cache_pos], &prev_prev, thread);
 
-        is_stored = !(is_stored && (curr_index >= memory_tradeoff) && (ref_ref_index == (uint16_t) -1));
+        is_stored = !is_stored || (curr_index < memory_tradeoff) || (ref_ref_index != (uint16_t) -1);
         if (!is_stored)
         {
             ref_indexes[curr_index] = ref_index;
         }
+
+        curr_cache_pos++;
+        curr_cache_pos = (curr_cache_pos == cache_size) ? 0 : curr_cache_pos;
     }
 
     store_block_global(memory + MEMORY_COST - 1, &prev, thread);
