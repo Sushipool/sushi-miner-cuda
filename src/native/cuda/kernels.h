@@ -101,6 +101,6 @@ __global__ void argon2(struct block_g *memory, uint32_t cacheSize, uint32_t memo
 __global__ void get_nonce(struct block_g *memory, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
 
 __host__ void set_block_header(struct worker_t *worker, uint32_t threadIndex, nimiq_block_header *block_header);
-__host__ uint32_t mine_nonces(struct worker_t *worker, uint32_t threadIndex, uint32_t start_nonce, uint32_t share_compact);
+__host__ cudaError_t mine_nonces(struct worker_t *worker, uint32_t threadIndex, uint32_t start_nonce, uint32_t share_compact, uint32_t *nonce);
 
 #endif

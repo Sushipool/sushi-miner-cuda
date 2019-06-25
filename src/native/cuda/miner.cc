@@ -543,14 +543,13 @@ void Device::MineNonces(uint32_t workId, uint32_t threadIndex, nimiq_block_heade
       break;
     }
 
-    uint32_t nonce = mine_nonces(&worker, threadIndex, (uint32_t)startNonce, miner->GetShareCompact());
-
-    cudaError_t error = cudaGetLastError();
-    if (error != cudaSuccess)
+    uint32_t nonce;
+    cudaError_t result = mine_nonces(&worker, threadIndex, (uint32_t)startNonce, miner->GetShareCompact(), &nonce);
+    if (result != cudaSuccess)
     {
-      const char *errorMsg = cudaGetErrorString(error);
+      const char *errorMsg = cudaGetErrorString(result);
       std::cerr << errorMsg << "\n";
-      std::exit(error);
+      std::exit(result);
     }
 
     progress.Send(&nonce, 1);
