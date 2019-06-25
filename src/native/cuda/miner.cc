@@ -489,7 +489,6 @@ void Device::Initialize()
   cudaSetDevice(deviceIndex);
   cudaDeviceReset();
   cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync); // cudaDeviceScheduleAuto
-  cudaDeviceSetCacheConfig(cudaFuncCachePreferL1);
 
   mutexes = new std::mutex *[threads];
   worker.memory = new block_g *[threads];
