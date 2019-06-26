@@ -409,9 +409,14 @@ NAN_SETTER(Device::HandleSetters)
   {
     if (!value->IsUint32())
     {
-      return Nan::ThrowError(Nan::New("Cache must be >= 0.").ToLocalChecked());
+      return Nan::ThrowError(Nan::New("Cache must be >= 2.").ToLocalChecked());
     }
-    device->cache = Nan::To<uint32_t>(value).FromJust();
+    uint32_t cache = Nan::To<uint32_t>(value).FromJust();
+    if (cache < 2)
+    {
+      return Nan::ThrowError(Nan::New("Cache must be >= 2.").ToLocalChecked());
+    }
+    device->cache = cache;
   }
   else if (propertyName == "memoryTradeoff")
   {
