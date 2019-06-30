@@ -30,14 +30,6 @@ __device__ __forceinline__ uint64_t rotr64(uint64_t x, uint32_t n)
     return (x >> n) | (x << (64 - n));
 }
 
-__device__ __forceinline__ uint32_t swap32(uint32_t x)
-{
-    return ((x & 0x000000FF) << 24)
-        | ((x & 0x0000FF00) << 8)
-        | ((x & 0x00FF0000) >> 8)
-        | ((x & 0xFF000000) >> 24);
-}
-
 __device__ __forceinline__ uint64_t swap64(uint64_t x)
 {
     return ((x & 0x00000000000000FFUL) << 56)
@@ -62,29 +54,60 @@ __device__ void blake2b_init(uint64_t *h, uint32_t hashlen)
     h[7] = IV7;
 }
 
-#define G(i, a, b, c, d)                    \
-    do {                                    \
-        a = a + b + m[sigma[r][2 * i]];     \
-        d = rotr64(d ^ a, 32);              \
-        c = c + d;                          \
-        b = rotr64(b ^ c, 24);              \
-        a = a + b + m[sigma[r][2 * i + 1]]; \
-        d = rotr64(d ^ a, 16);              \
-        c = c + d;                          \
-        b = rotr64(b ^ c, 63);              \
-    } while(0)
+__device__ void g(uint64_t *a, uint64_t *b, uint64_t *c, uint64_t *d, uint64_t m1, uint64_t m2)
+{
+    asm("{"
+        ".reg .u64 s, x;"
+        ".reg .u32 l1, l2, h1, h2;"
+        // a = a + b + x
+        "add.u64 %0, %0, %1;"
+        "add.u64 %0, %0, %4;"
+        // d = rotr64(d ^ a, 32)
+        "xor.b64 x, %3, %0;"
+        "mov.b64 {h1, l1}, x;"
+        "mov.b64 %3, {l1, h1};"
+        // c = c + d
+        "add.u64 %2, %2, %3;"
+        // b = rotr64(b ^ c, 24)
+        "xor.b64 x, %1, %2;"
+        "mov.b64 {l1, h1}, x;"
+        "prmt.b32 l2, l1, h1, 0x6543;"
+        "prmt.b32 h2, l1, h1, 0x2107;"
+        "mov.b64 %1, {l2, h2};"
+        // a = a + b + y
+        "add.u64 %0, %0, %1;"
+        "add.u64 %0, %0, %5;"
+        // d = rotr64(d ^ a, 16);
+        "xor.b64 x, %3, %0;"
+        "mov.b64 {l1, h1}, x;"
+        "prmt.b32 l2, l1, h1, 0x5432;"
+        "prmt.b32 h2, l1, h1, 0x1076;"
+        "mov.b64 %3, {l2, h2};"
+        // c = c + d
+        "add.u64 %2, %2, %3;"
+        // b = rotr64(b ^ c, 63)
+        "xor.b64 x, %1, %2;"
+        "shl.b64 s, x, 1;"
+        "shr.b64 x, x, 63;"
+        "add.u64 %1, s, x;"
+        "}"
+        : "+l"(*a), "+l"(*b), "+l"(*c), "+l"(*d) : "l"(m1), "l"(m2)
+    );
+}
 
-#define ROUND()                          \
-    do {                                 \
-        G(0, v[0], v[4], v[8], v[12]);   \
-        G(1, v[1], v[5], v[9], v[13]);   \
-        G(2, v[2], v[6], v[10], v[14]);  \
-        G(3, v[3], v[7], v[11], v[15]);  \
-        G(4, v[0], v[5], v[10], v[15]);  \
-        G(5, v[1], v[6], v[11], v[12]);  \
-        G(6, v[2], v[7], v[8], v[13]);   \
-        G(7, v[3], v[4], v[9], v[14]);   \
-    } while(0)
+#define G(i, a, b, c, d) (g(&v[a], &v[b], &v[c], &v[d], m[sigma[r][2 * i]], m[sigma[r][2 * i + 1]]))
+
+__device__ void blake2b_round(uint32_t r, uint64_t *v, uint64_t *m)
+{
+    G(0, 0, 4, 8, 12);
+    G(1, 1, 5, 9, 13);
+    G(2, 2, 6, 10, 14);
+    G(3, 3, 7, 11, 15);
+    G(4, 0, 5, 10, 15);
+    G(5, 1, 6, 11, 12);
+    G(6, 2, 7, 8, 13);
+    G(7, 3, 4, 9, 14);
+}
 
 __device__ void blake2b_compress(uint64_t *h, uint64_t *m, uint32_t bytes_compressed, bool last_block)
 {
@@ -110,7 +133,7 @@ __device__ void blake2b_compress(uint64_t *h, uint64_t *m, uint32_t bytes_compre
     #pragma unroll
     for (uint32_t r = 0; r < 12; r++)
     {
-      ROUND();
+        blake2b_round(r, v, m);
     }
 
     h[0] = h[0] ^ v[0] ^ v[8];
@@ -123,51 +146,64 @@ __device__ void blake2b_compress(uint64_t *h, uint64_t *m, uint32_t bytes_compre
     h[7] = h[7] ^ v[7] ^ v[15];
 }
 
-__device__ __forceinline__ void set_nonce(uint64_t *inseed, uint32_t nonce)
+__device__ __forceinline__ void set_nonce(uint64_t *buffer, uint32_t nonce)
 {
-    // bytes 170-173
-    uint64_t n = swap32(nonce);
-    inseed[21] = (inseed[21] & 0xFFFF00000000FFFFUL) | (n << 16);
+    uint64_t n = (((uint64_t) __byte_perm(0, nonce, 0x0045)) << 32) | __byte_perm(0, nonce, 0x6700);
+    buffer[5] = buffer[5] | n;
 }
 
-__device__ void initial_hash(uint64_t *hash, uint64_t *inseed, uint32_t nonce)
+__device__ void compute_initial_hash(uint64_t *hash, uint64_t *inseed, uint32_t nonce)
 {
-    uint64_t is[32];
-    memcpy(is, inseed, sizeof(is));
-    set_nonce(is, nonce);
+    uint64_t buffer[BLAKE2B_QWORDS_IN_BLOCK];
 
     blake2b_init(hash, BLAKE2B_HASH_LENGTH);
-    blake2b_compress(hash, &is[0], BLAKE2B_BLOCK_SIZE, false);
-    blake2b_compress(hash, &is[BLAKE2B_QWORDS_IN_BLOCK], ARGON2_INITIAL_SEED_SIZE, true);
+
+    for (int i = 0; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+    {
+        buffer[i] = inseed[i];
+    }
+    blake2b_compress(hash, buffer, BLAKE2B_BLOCK_SIZE, false);
+
+    for (int i = 0; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+    {
+        buffer[i] = inseed[BLAKE2B_QWORDS_IN_BLOCK + i];
+    }
+    set_nonce(buffer, nonce);
+    blake2b_compress(hash, buffer, ARGON2_INITIAL_SEED_SIZE, true);
 }
 
 __device__ void fill_first_block(struct block_g *memory, uint64_t *inseed, uint32_t nonce, uint32_t block)
 {
     uint64_t hash[8];
-    initial_hash(hash, inseed, nonce);
+    compute_initial_hash(hash, inseed, nonce);
 
-    uint32_t prehash_seed[32] = {ARGON2_BLOCK_SIZE};
-    #pragma unroll
-    for (uint32_t i = 0; i < 8; i++)
-    {
-        prehash_seed[2 * i + 1] = (uint32_t) hash[i];
-        prehash_seed[2 * i + 2] = (uint32_t) (hash[i] >> 32);
-    }
+    uint32_t prehash_seed[BLAKE2B_BLOCK_SIZE / sizeof(uint32_t)];
+
+    // Construct prehash seed
+    prehash_seed[0] = ARGON2_BLOCK_SIZE;
+    memcpy(&prehash_seed[1], hash, BLAKE2B_HASH_LENGTH);
     prehash_seed[17] = block;
+    for (int i = 18; i < 32; i++)
+    {
+        prehash_seed[i] = 0;
+    }
 
-    uint64_t buffer[BLAKE2B_QWORDS_IN_BLOCK] = {0};
-    uint64_t *dst = memory->data;
+    ulonglong2 *dst = (ulonglong2*) memory->data;
 
     // V1
     blake2b_init(hash, BLAKE2B_HASH_LENGTH);
-    blake2b_compress(hash, (uint64_t *) prehash_seed, ARGON2_PREHASH_SEED_SIZE, true);
+    blake2b_compress(hash, (uint64_t*) prehash_seed, ARGON2_PREHASH_SEED_SIZE, true);
 
-    *(dst++) = hash[0];
-    *(dst++) = hash[1];
-    *(dst++) = hash[2];
-    *(dst++) = hash[3];
+    *(dst++) = *((ulonglong2*) &hash[0]);
+    *(dst++) = *((ulonglong2*) &hash[2]);
 
     // V2-Vr
+    uint64_t buffer[BLAKE2B_QWORDS_IN_BLOCK];
+    for (int i = 8; i < BLAKE2B_QWORDS_IN_BLOCK; i++)
+    {
+        buffer[i] = 0;
+    }
+
     for (int r = 2; r < 2 * ARGON2_BLOCK_SIZE / BLAKE2B_HASH_LENGTH; r++)
     {
         buffer[0] = hash[0];
@@ -182,16 +218,12 @@ __device__ void fill_first_block(struct block_g *memory, uint64_t *inseed, uint3
         blake2b_init(hash, BLAKE2B_HASH_LENGTH);
         blake2b_compress(hash, buffer, BLAKE2B_HASH_LENGTH, true);
 
-        *(dst++) = hash[0];
-        *(dst++) = hash[1];
-        *(dst++) = hash[2];
-        *(dst++) = hash[3];
+        *(dst++) = *((ulonglong2*) &hash[0]);
+        *(dst++) = *((ulonglong2*) &hash[2]);
     }
 
-    *(dst++) = hash[4];
-    *(dst++) = hash[5];
-    *(dst++) = hash[6];
-    *(dst++) = hash[7];
+    *(dst++) = *((ulonglong2*) &hash[4]);
+    *(dst++) = *((ulonglong2*) &hash[6]);
 }
 
 __device__ void compact_to_target(uint32_t share_compact, uint64_t *target)
