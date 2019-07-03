@@ -297,7 +297,7 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
     // select job's memory region
     memory += (size_t)job_id * MEMORY_COST;
 
-    struct block_th prev_prev, ref_prev, prev, tmp;
+    struct block_th prev_prev, prev, ref, tmp;
     bool is_stored = true;
     load_block_global(&tmp, memory, thread);
     load_block_global(&prev, memory + 1, thread);
@@ -323,19 +323,21 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
         {
             uint32_t ref_cache_pos = curr_cache_pos + (cache_size + 1 - ref_offset);
             ref_cache_pos = (ref_cache_pos >= cache_size) ? ref_cache_pos - cache_size : ref_cache_pos;
-            load_block_cache(&tmp, &cache[ref_cache_pos], thread);
-            xor_block(&prev, &tmp);
+            load_block_cache(&ref, &cache[ref_cache_pos], thread);
+            xor_block(&prev, &ref);
         }
         else if (ref_ref_index == (uint16_t) -1)
         {
-            load_block_global(&tmp, memory + ref_index, thread);
-            xor_block(&prev, &tmp);
+            load_block_global(&ref, memory + ref_index, thread);
+            xor_block(&prev, &ref);
         }
         else
         {
+            struct block_th ref_prev, ref_ref;
+
             load_block_global(&ref_prev, memory + ref_index - 1, thread);
-            load_block_global(&tmp, memory + ref_ref_index, thread);
-            xor_block(&ref_prev, &tmp);
+            load_block_global(&ref_ref, memory + ref_ref_index, thread);
+            xor_block(&ref_prev, &ref_ref);
 
             move_block(&tmp, &ref_prev);
             shuffle_block(&ref_prev, thread);
