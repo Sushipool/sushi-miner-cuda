@@ -58,27 +58,8 @@ __device__ void load_block_cache(struct block_th *dst, const struct block_g *src
 __device__ void load_block_global(struct block_th *dst, const struct block_g *src, uint32_t thread)
 {
     ulonglong2 *u128 = (ulonglong2*) src->data;
-    *((ulonglong2*) &dst->a) = u128[0 * THREADS_PER_LANE + thread];
-    *((ulonglong2*) &dst->c) = u128[1 * THREADS_PER_LANE + thread];
-}
-
-__device__ void load_block_xor_cache(struct block_th *dst, const struct block_g *src, uint32_t thread)
-{
-    dst->a ^= src->data[0 * THREADS_PER_LANE + thread];
-    dst->b ^= src->data[1 * THREADS_PER_LANE + thread];
-    dst->c ^= src->data[2 * THREADS_PER_LANE + thread];
-    dst->d ^= src->data[3 * THREADS_PER_LANE + thread];
-}
-
-__device__ void load_block_xor_global(struct block_th *dst, const struct block_g *src, uint32_t thread)
-{
-    ulonglong2 *u128 = (ulonglong2*) src->data;
-    ulonglong2 ab = u128[0 * THREADS_PER_LANE + thread];
-    dst->a ^= ab.x;
-    dst->b ^= ab.y;
-    ulonglong2 cd = u128[1 * THREADS_PER_LANE + thread];
-    dst->c ^= cd.x;
-    dst->d ^= cd.y;
+    asm("ld.global.ca.v2.u64 {%0, %1}, [%2];" : "=l"(dst->a), "=l"(dst->b) : "l"(&u128[0 * THREADS_PER_LANE + thread]));
+    asm("ld.global.ca.v2.u64 {%0, %1}, [%2];" : "=l"(dst->c), "=l"(dst->d) : "l"(&u128[1 * THREADS_PER_LANE + thread]));
 }
 
 __device__ void store_block_cache(struct block_g *dst, const struct block_th *src, uint32_t thread)
@@ -91,8 +72,8 @@ __device__ void store_block_cache(struct block_g *dst, const struct block_th *sr
 
 __device__ void store_block_global(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
-    ((ulonglong2*) &dst->data)[0 * THREADS_PER_LANE + thread] = *((ulonglong2*) &src->a);
-    ((ulonglong2*) &dst->data)[1 * THREADS_PER_LANE + thread] = *((ulonglong2*) &src->c);
+    asm("st.global.wb.v2.u64 [%0], {%1, %2};" :: "l"(&dst->data[0 * THREADS_PER_LANE + 2 * thread]), "l"(src->a), "l"(src->b));
+    asm("st.global.wb.v2.u64 [%0], {%1, %2};" :: "l"(&dst->data[2 * THREADS_PER_LANE + 2 * thread]), "l"(src->c), "l"(src->d));
 }
 
 __device__ void g(struct block_th *block)
@@ -342,16 +323,19 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
         {
             uint32_t ref_cache_pos = curr_cache_pos + (cache_size + 1 - ref_offset);
             ref_cache_pos = (ref_cache_pos >= cache_size) ? ref_cache_pos - cache_size : ref_cache_pos;
-            load_block_xor_cache(&prev, &cache[ref_cache_pos], thread);
+            load_block_cache(&tmp, &cache[ref_cache_pos], thread);
+            xor_block(&prev, &tmp);
         }
         else if (ref_ref_index == (uint16_t) -1)
         {
-            load_block_xor_global(&prev, memory + ref_index, thread);
+            load_block_global(&tmp, memory + ref_index, thread);
+            xor_block(&prev, &tmp);
         }
         else
         {
             load_block_global(&ref_prev, memory + ref_index - 1, thread);
-            load_block_xor_global(&ref_prev, memory + ref_ref_index, thread);
+            load_block_global(&tmp, memory + ref_ref_index, thread);
+            xor_block(&ref_prev, &tmp);
 
             move_block(&tmp, &ref_prev);
             shuffle_block(&ref_prev, thread);

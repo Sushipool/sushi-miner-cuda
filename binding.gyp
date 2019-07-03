@@ -16,7 +16,7 @@
         ['OS=="win"', {
             'process_outputs_as_sources': 0,
             'action': [
-              'nvcc', '-Xptxas=-dlcm=ca -dscm=wb', '--std=c++11', '-c', '-O3',
+              'nvcc', '--std=c++11', '-c', '-O3',
               '--default-stream=per-thread',
               '--generate-code=arch=compute_35,code=sm_35',
               '--generate-code=arch=compute_35,code=compute_35',
@@ -29,7 +29,7 @@
           }, {
             'process_outputs_as_sources': 1,
             'action': [
-              'nvcc', '-Xptxas=-dlcm=ca -dscm=wb', '--std=c++11', '-Xcompiler', '-fpic', '-c', '-O3',
+              'nvcc', '--std=c++11', '-Xcompiler', '-fpic', '-c', '-O3',
               '--default-stream=per-thread',
               '--generate-code=arch=compute_35,code=sm_35',
               '--generate-code=arch=compute_35,code=compute_35',
