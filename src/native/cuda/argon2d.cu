@@ -62,6 +62,13 @@ __device__ void load_block_global(struct block_th *dst, const struct block_g *sr
     asm("ld.global.ca.v2.u64 {%0, %1}, [%2];" : "=l"(dst->c), "=l"(dst->d) : "l"(&u128[1 * THREADS_PER_LANE + thread]));
 }
 
+__device__ void load_block_global_nc(struct block_th *dst, const struct block_g *src, uint32_t thread)
+{
+    ulonglong2 *u128 = (ulonglong2*) src->data;
+    asm("ld.global.nc.v2.u64 {%0, %1}, [%2];" : "=l"(dst->a), "=l"(dst->b) : "l"(&u128[0 * THREADS_PER_LANE + thread]));
+    asm("ld.global.nc.v2.u64 {%0, %1}, [%2];" : "=l"(dst->c), "=l"(dst->d) : "l"(&u128[1 * THREADS_PER_LANE + thread]));
+}
+
 __device__ void store_block_cache(struct block_g *dst, const struct block_th *src, uint32_t thread)
 {
     dst->data[0 * THREADS_PER_LANE + thread] = src->a;
@@ -299,8 +306,8 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
 
     struct block_th prev_prev, prev, ref, tmp;
     bool is_stored = true;
-    load_block_global(&tmp, memory, thread);
-    load_block_global(&prev, memory + 1, thread);
+    load_block_global_nc(&tmp, memory, thread);
+    load_block_global_nc(&prev, memory + 1, thread);
 
     // cache first block
     store_block_cache(&cache[0], &tmp, thread);
@@ -328,15 +335,37 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
         }
         else if (ref_ref_index == (uint16_t) -1)
         {
-            load_block_global(&ref, memory + ref_index, thread);
+            if (ref_index < 2)
+            {
+                load_block_global_nc(&ref, memory + ref_index, thread);
+            }
+            else
+            {
+                load_block_global(&ref, memory + ref_index, thread);
+            }
             xor_block(&prev, &ref);
         }
         else
         {
             struct block_th ref_prev, ref_ref;
+            uint32_t ref_prev_index = ref_index - 1;
 
-            load_block_global(&ref_prev, memory + ref_index - 1, thread);
-            load_block_global(&ref_ref, memory + ref_ref_index, thread);
+            if (ref_prev_index < 2)
+            {
+                load_block_global_nc(&ref_prev, memory + ref_prev_index, thread);
+            }
+            else
+            {
+                load_block_global(&ref_prev, memory + ref_prev_index, thread);
+            }
+            if (ref_ref_index < 2)
+            {
+                load_block_global_nc(&ref_ref, memory + ref_ref_index, thread);
+            }
+            else
+            {
+                load_block_global(&ref_ref, memory + ref_ref_index, thread);
+            }
             xor_block(&ref_prev, &ref_ref);
 
             move_block(&tmp, &ref_prev);
