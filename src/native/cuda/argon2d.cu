@@ -350,14 +350,7 @@ __global__ void argon2(struct block_g *memory, uint32_t cache_size, uint32_t mem
             struct block_th ref_prev, ref_ref;
             uint32_t ref_prev_index = ref_index - 1;
 
-            if (ref_prev_index < 2)
-            {
-                load_block_global_nc(&ref_prev, memory + ref_prev_index, thread);
-            }
-            else
-            {
-                load_block_global(&ref_prev, memory + ref_prev_index, thread);
-            }
+            load_block_global(&ref_prev, memory + ref_prev_index, thread);
             if (ref_ref_index < 2)
             {
                 load_block_global_nc(&ref_ref, memory + ref_ref_index, thread);
